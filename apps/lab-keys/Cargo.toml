@@ -1,0 +1,23 @@
+[package]
+name = "lab-keys"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+eframe.workspace = true
+egui.workspace = true
+lab-ui = { path = "../../crates/lab-ui" }
+serde.workspace = true
+serde_json.workspace = true
+# Cripto — MESMOS pins do LocalKeys (crypto.rs é copiado verbatim)
+argon2.workspace = true
+chacha20poly1305.workspace = true
+rand.workspace = true
+zeroize.workspace = true
+arboard.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# Flag ExcludeClipboardContentFromMonitorProcessing ao copiar senha
+clipboard-win = "5.4"
+rfd.workspace = true
