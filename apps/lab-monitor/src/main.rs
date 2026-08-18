@@ -314,6 +314,7 @@ impl eframe::App for MonitorApp {
                         }
                     });
             });
+        }); // CentralPanel
 
         // ── diálogo de confirmação de encerramento ─────────────────────
         if let Some((pid, name)) = self.kill_ask.clone() {
