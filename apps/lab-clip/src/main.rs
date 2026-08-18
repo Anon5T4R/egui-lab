@@ -23,7 +23,10 @@ use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use lab_ui::config::{self, Config};
 use lab_ui::i18n::{self, Key};
 use lab_ui::theme;
+
+#[cfg(windows)]
 use tray_icon::menu::{Menu, MenuItem, MenuEvent};
+#[cfg(windows)]
 use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use history::ClipItem;
@@ -54,6 +57,7 @@ struct ClipApp {
     search: String,
     rx: Receiver<String>,
     /// Viva enquanto o app viver: derruba a bandeja e o atalho no drop.
+    #[cfg(windows)]
     _tray: TrayIcon,
     _hotkeys: GlobalHotKeyManager,
     visible: bool,
@@ -64,18 +68,22 @@ impl ClipApp {
     fn new(cfg: Config) -> Self {
         let rx = poller::spawn();
 
-        // Bandeja: menu mínimo + toggle no clique esquerdo (paridade do oficial).
-        let show = MenuItem::with_id("show", "Mostrar/Ocultar", true, None);
-        let quit = MenuItem::with_id("quit", "Sair", true, None);
-        let menu = Menu::new();
-        let _ = menu.append(&show);
-        let _ = menu.append(&quit);
-        let tray = TrayIconBuilder::new()
-            .with_menu(Box::new(menu))
-            .with_tooltip("Lab Clip (Ctrl+Alt+V)")
-            .with_icon(tray_icon().expect("ícone rgba"))
-            .build()
-            .expect("tray");
+        // Bandeja: menu mínimo + toggle no clique esquerdo (paridade do
+        // oficial). Só no Windows — ver nota no Cargo.toml.
+        #[cfg(windows)]
+        let tray = {
+            let show = MenuItem::with_id("show", "Mostrar/Ocultar", true, None);
+            let quit = MenuItem::with_id("quit", "Sair", true, None);
+            let menu = Menu::new();
+            let _ = menu.append(&show);
+            let _ = menu.append(&quit);
+            TrayIconBuilder::new()
+                .with_menu(Box::new(menu))
+                .with_tooltip("Lab Clip (Ctrl+Alt+V)")
+                .with_icon(tray_icon().expect("ícone rgba"))
+                .build()
+                .expect("tray")
+        };
 
         // Atalho global: Ctrl+Alt+V (o oficial é Ctrl+Shift+V — ver header).
         let hotkeys = GlobalHotKeyManager::new().expect("manager de hotkey");
@@ -91,6 +99,7 @@ impl ClipApp {
             items: Vec::new(),
             search: String::new(),
             rx,
+            #[cfg(windows)]
             _tray: tray,
             _hotkeys: hotkeys,
             visible: true,
@@ -124,6 +133,7 @@ impl ClipApp {
 
 /// Ícone 32×32 gerado em código (lab não carrega assets): uma "prancheta"
 /// rosa com placa clara — nada de texto, 32px é pouco pra letra legível.
+#[cfg(windows)]
 fn tray_icon() -> Option<tray_icon::Icon> {
     let (w, h) = (32u32, 32u32);
     let mut rgba = vec![0u8; (w * h * 4) as usize];
@@ -152,21 +162,24 @@ fn tray_icon() -> Option<tray_icon::Icon> {
 impl eframe::App for ClipApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // ── eventos de fora (bandeja, atalho, poller) ────────────────────
-        while let Ok(ev) = MenuEvent::receiver().try_recv() {
-            match ev.id.0.as_str() {
-                "show" => self.toggle(ctx),
-                "quit" => ctx.send_viewport_cmd(egui::ViewportCommand::Exit),
-                _ => {}
+        #[cfg(windows)]
+        {
+            while let Ok(ev) = MenuEvent::receiver().try_recv() {
+                match ev.id.0.as_str() {
+                    "show" => self.toggle(ctx),
+                    "quit" => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                    _ => {}
+                }
             }
-        }
-        while let Ok(ev) = TrayIconEvent::receiver().try_recv() {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = ev
-            {
-                self.toggle(ctx);
+            while let Ok(ev) = TrayIconEvent::receiver().try_recv() {
+                if let TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } = ev
+                {
+                    self.toggle(ctx);
+                }
             }
         }
         while let Ok(ev) = GlobalHotKeyEvent::receiver().try_recv() {
@@ -292,7 +305,7 @@ impl eframe::App for ClipApp {
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
-                            .add_enabled(!soltos.is_empty(), egui::Button::new(t(Key::Clear)))
+                            .add_enabled(soltos > 0, egui::Button::new(t(Key::Clear)))
                             .clicked()
                         {
                             history::clear_unpinned(&mut self.items);

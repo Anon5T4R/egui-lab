@@ -83,8 +83,9 @@ Tag `vX.Y.Z` → `release.yml` publica na GitHub Release:
 Gotchas conhecidos do lab: `lab-keys` roda o Argon2 na thread da UI (~300 ms
 de freeze no destrancar — o oficial usa command async); `lab-clip` encerra no
 X (o "fechar pra bandeja" do oficial é opt-in e não configuramos); diálogos de
-arquivo nativos só no Windows (rfd win32) — no Linux o caminho do `.tkeys` é
-digitado, de propósito (gtk3 no AppImage engordaria dezenas de MB à toa).
+arquivo nativos e **bandeja só no Windows** — no Linux o `tray-icon` puxaria
+muda/gtk3 (glib-sys) pro AppImage, então lá o lab-clip vive só de atalho
+global (X11) + janela (mesma política do rfd: caminho digitado no lab-keys).
 
 ## Critérios de decisão (go/no-go)
 

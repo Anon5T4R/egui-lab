@@ -9,9 +9,12 @@ eframe.workspace = true
 egui.workspace = true
 lab-ui = { path = "../../crates/lab-ui" }
 arboard.workspace = true
-tray-icon.workspace = true
 global-hotkey.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+# Bandeja só no Windows: no Linux o tray-icon puxa muda→gtk3 (glib-sys), que
+# engordaria o AppImage em dezenas de MB — mesma razão do rfd ser win-only.
+# O atalho global (X11) continua nos dois.
+tray-icon.workspace = true
 # Leitura da flag ExcludeClipboardContentFromMonitorProcessing (privacidade)
 clipboard-win = "5.4"
