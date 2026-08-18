@@ -10,11 +10,15 @@ egui.workspace = true
 lab-ui = { path = "../../crates/lab-ui" }
 serde.workspace = true
 serde_json.workspace = true
-# Cripto — MESMOS pins do LocalKeys (crypto.rs é copiado verbatim)
+# Cripto — MESMOS pins do LocalKeys (crypto.rs/totp.rs copiados verbatim)
 argon2.workspace = true
 chacha20poly1305.workspace = true
 rand.workspace = true
 zeroize.workspace = true
+totp-rs.workspace = true
+# Desbloqueio rápido: chave derivada no cofre do SO (mesmo desenho do oficial)
+keyring.workspace = true
+base64.workspace = true
 arboard.workspace = true
 
 [target.'cfg(windows)'.dependencies]

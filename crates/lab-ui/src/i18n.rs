@@ -35,6 +35,8 @@ pub enum Key {
     Memory,
     Cores,
     Uptime,
+    Disks,
+    Network,
     Processes,
     Filter,
     Name,
@@ -67,6 +69,12 @@ pub enum Key {
     Username,
     Password,
     Lock,
+    // lab-keys onda 4
+    Totp,
+    QuickUnlock,
+    ForgetKey,
+    Edit,
+    SecondsShort,
 }
 
 /// Todas as chaves — usado pelo teste de completude (fora de teste o match
@@ -83,6 +91,8 @@ const KEYS: &[Key] = &[
     Key::Memory,
     Key::Cores,
     Key::Uptime,
+    Key::Disks,
+    Key::Network,
     Key::Processes,
     Key::Filter,
     Key::Name,
@@ -112,6 +122,11 @@ const KEYS: &[Key] = &[
     Key::Username,
     Key::Password,
     Key::Lock,
+    Key::Totp,
+    Key::QuickUnlock,
+    Key::ForgetKey,
+    Key::Edit,
+    Key::SecondsShort,
 ];
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -156,6 +171,16 @@ pub fn t(lang: Lang, key: Key) -> &'static str {
             Lang::Pt => "Ligado há",
             Lang::En => "Uptime",
             Lang::Es => "Tiempo encendido",
+        },
+        Key::Disks => match lang {
+            Lang::Pt => "Discos",
+            Lang::En => "Disks",
+            Lang::Es => "Discos",
+        },
+        Key::Network => match lang {
+            Lang::Pt => "Rede",
+            Lang::En => "Network",
+            Lang::Es => "Red",
         },
         Key::Processes => match lang {
             Lang::Pt => "Processos",
@@ -302,6 +327,23 @@ pub fn t(lang: Lang, key: Key) -> &'static str {
             Lang::En => "Lock",
             Lang::Es => "Bloquear",
         },
+        Key::Totp => "TOTP",
+        Key::QuickUnlock => match lang {
+            Lang::Pt => "Desbloqueio rápido neste PC",
+            Lang::En => "Quick unlock on this PC",
+            Lang::Es => "Desbloqueo rápido en este PC",
+        },
+        Key::ForgetKey => match lang {
+            Lang::Pt => "Esquecer chave",
+            Lang::En => "Forget key",
+            Lang::Es => "Olvidar clave",
+        },
+        Key::Edit => match lang {
+            Lang::Pt => "Editar",
+            Lang::En => "Edit",
+            Lang::Es => "Editar",
+        },
+        Key::SecondsShort => "s",
     }
 }
 

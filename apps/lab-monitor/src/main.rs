@@ -1,8 +1,8 @@
 //! lab-monitor — piloto de referência do LocalMonitor em egui/eframe.
 //! Onda 1: CPU total/por núcleo e memória ao vivo, gráficos pintados à mão.
-//! Onda 2 (este): tabela de processos — filtro, ordenação por coluna e
-//! encerrar com confirmação (o paridade do "Gerenciador de Tarefas" do app
-//! oficial). Mede o custo do immediate mode pra dado em tempo real.
+//! Onda 2: tabela de processos (filtro/ordenação/encerrar com confirmação).
+//! Onda 4: rede (↓/ú por segundo com histórico) e discos (uso por volume) —
+//! paridade de features com o v0.1 do app oficial.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -13,7 +13,7 @@ use eframe::egui;
 use lab_ui::config::{self, Config};
 use lab_ui::i18n::{self, Key};
 use lab_ui::theme::{self, Palette};
-use sysinfo::{Pid, ProcessesToUpdate};
+use sysinfo::{Disks, Networks, Pid, ProcessesToUpdate};
 
 const APP_ID: &str = "lab-monitor";
 const MAX_SAMPLES: usize = 160;
@@ -27,7 +27,7 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Lab Monitor")
-            .with_inner_size([460.0, 720.0]),
+            .with_inner_size([470.0, 800.0]),
         ..Default::default()
     };
     eframe::run_native(
@@ -51,8 +51,12 @@ enum SortCol {
 struct MonitorApp {
     cfg: Config,
     sys: sysinfo::System,
+    disks: Disks,
+    nets: Networks,
     cpu_hist: VecDeque<f32>,
     mem_hist: VecDeque<f32>,
+    down_hist: VecDeque<f32>, // bytes/s
+    up_hist: VecDeque<f32>,   // bytes/s
     cores: Vec<f32>,
     last_refresh: Instant,
     // processos
@@ -68,8 +72,12 @@ impl MonitorApp {
         let mut app = Self {
             cfg,
             sys: sysinfo::System::new(),
+            disks: Disks::new_with_refreshed_list(),
+            nets: Networks::new_with_refreshed_list(),
             cpu_hist: VecDeque::new(),
             mem_hist: VecDeque::new(),
+            down_hist: VecDeque::new(),
+            up_hist: VecDeque::new(),
             cores: Vec::new(),
             last_refresh: Instant::now(),
             filter: String::new(),
@@ -82,9 +90,12 @@ impl MonitorApp {
     }
 
     fn refresh(&mut self) {
+        let elapsed = self.last_refresh.elapsed().as_secs_f64().max(0.05);
         self.sys.refresh_cpu_all();
         self.sys.refresh_memory();
         self.sys.refresh_processes(ProcessesToUpdate::All, true);
+        self.disks.refresh(true);
+        self.nets.refresh(true);
 
         let cores: Vec<f32> = self.sys.cpus().iter().map(|c| c.cpu_usage()).collect();
         let cpu = if cores.is_empty() {
@@ -98,10 +109,20 @@ impl MonitorApp {
         } else {
             0.0
         };
-
         self.cores = cores;
         push_sample(&mut self.cpu_hist, cpu);
         push_sample(&mut self.mem_hist, mem);
+
+        // Rede: `received()` é o delta desde o último refresh — dividir pelo
+        // tempo real decorrido dá bytes/s. Soma as interfaces (menos loopback).
+        let (rx, tx): (u64, u64) = self
+            .nets
+            .iter()
+            .filter(|(name, _)| !name.starts_with("lo"))
+            .map(|(_, d)| (d.received(), d.transmitted()))
+            .fold((0, 0), |(a, b), (x, y)| (a + x, b + y));
+        push_sample(&mut self.down_hist, (rx as f64 / elapsed) as f32);
+        push_sample(&mut self.up_hist, (tx as f64 / elapsed) as f32);
     }
 
     /// Linha da tabela: dados mínimos clonados do processo (evita segurar o
@@ -113,7 +134,6 @@ impl MonitorApp {
             .processes()
             .iter()
             .filter(|(_, p)| {
-                // A lixeira não: processo morto listado até o próximo refresh.
                 if needle.is_empty() {
                     return true;
                 }
@@ -167,6 +187,20 @@ fn push_sample(hist: &mut VecDeque<f32>, v: f32) {
     hist.push_back(v);
 }
 
+fn fmt_rate(bytes_per_s: f64) -> String {
+    if bytes_per_s < 1024.0 {
+        format!("{bytes_per_s:.0} B/s")
+    } else if bytes_per_s < 1024.0 * 1024.0 {
+        format!("{:.1} KB/s", bytes_per_s / 1024.0)
+    } else {
+        format!("{:.1} MB/s", bytes_per_s / 1024.0 / 1024.0)
+    }
+}
+
+fn fmt_gb(bytes: u64) -> String {
+    format!("{:.0} GB", bytes as f64 / 1e9)
+}
+
 impl eframe::App for MonitorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if self.last_refresh.elapsed() >= REFRESH {
@@ -194,6 +228,7 @@ impl eframe::App for MonitorApp {
             let pal = self.cfg.theme.palette();
             let lang = self.cfg.lang;
             let t = |k: Key| i18n::t(lang, k);
+            let width = ui.available_width();
 
             // ── visão geral ─────────────────────────────────────────────
             let cpu_now = self.cpu_hist.back().copied().unwrap_or(0.0);
@@ -202,9 +237,12 @@ impl eframe::App for MonitorApp {
                 &self.cpu_hist,
                 &pal,
                 format!("{} · {:.0}%", t(Key::Cpu), cpu_now),
+                width,
+                90.0,
+                true,
             );
 
-            ui.add_space(8.0);
+            ui.add_space(6.0);
 
             let mem_now = self.mem_hist.back().copied().unwrap_or(0.0);
             let used_gb = self.sys.used_memory() as f64 / 1e9;
@@ -220,15 +258,45 @@ impl eframe::App for MonitorApp {
                     used_gb,
                     total_gb
                 ),
+                width,
+                90.0,
+                true,
             );
 
-            ui.add_space(12.0);
+            ui.add_space(6.0);
+
+            // Rede: ↓ e ↑ lado a lado, escala automática (não é %).
+            ui.horizontal(|ui| {
+                let half = (width - 6.0) / 2.0;
+                let down = self.down_hist.back().copied().unwrap_or(0.0);
+                let up = self.up_hist.back().copied().unwrap_or(0.0);
+                chart(
+                    ui,
+                    &self.down_hist,
+                    &pal,
+                    format!("↓ {}", fmt_rate(down as f64)),
+                    half,
+                    60.0,
+                    false,
+                );
+                chart(
+                    ui,
+                    &self.up_hist,
+                    &pal,
+                    format!("↑ {}", fmt_rate(up as f64)),
+                    half,
+                    60.0,
+                    false,
+                );
+            });
+
+            ui.add_space(10.0);
             ui.label(egui::RichText::new(t(Key::Cores)).small().weak());
 
             ui.horizontal_wrapped(|ui| {
                 for (i, usage) in self.cores.iter().enumerate() {
                     let (rect, resp) =
-                        ui.allocate_exact_size(egui::vec2(30.0, 56.0), egui::Sense::hover());
+                        ui.allocate_exact_size(egui::vec2(28.0, 44.0), egui::Sense::hover());
                     let p = ui.painter_at(rect);
                     p.rect_filled(rect, egui::CornerRadius::same(2), pal.sunken);
                     let h = rect.height() * (usage.clamp(0.0, 100.0) / 100.0);
@@ -241,7 +309,51 @@ impl eframe::App for MonitorApp {
                 }
             });
 
-            ui.add_space(16.0);
+            ui.add_space(12.0);
+            ui.separator();
+
+            // ── discos ───────────────────────────────────────────────────
+            ui.strong(t(Key::Disks));
+            ui.add_space(4.0);
+            let disk_rows: Vec<(String, u64, u64)> = self
+                .disks
+                .list()
+                .iter()
+                .map(|d| {
+                    (
+                        d.mount_point().to_string_lossy().into_owned(),
+                        d.total_space(),
+                        d.available_space(),
+                    )
+                })
+                .collect();
+            for (mount, total, avail) in disk_rows {
+                let used = total.saturating_sub(avail);
+                let pct = if total > 0 {
+                    used as f32 / total as f32
+                } else {
+                    0.0
+                };
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(width, 14.0), egui::Sense::hover());
+                let p = ui.painter_at(rect);
+                p.rect_filled(rect, egui::CornerRadius::same(2), pal.sunken);
+                let fill = egui::Rect::from_min_size(
+                    rect.min,
+                    egui::vec2(rect.width() * pct.clamp(0.0, 1.0), rect.height()),
+                );
+                p.rect_filled(fill, egui::CornerRadius::same(2), pal.accent);
+                p.text(
+                    egui::pos2(rect.left() + 6.0, rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    format!("{mount}  {}/{} ({:.0}%)", fmt_gb(used), fmt_gb(total), pct * 100.0),
+                    egui::FontId::proportional(11.0),
+                    pal.text,
+                );
+                ui.add_space(2.0);
+            }
+
+            ui.add_space(10.0);
             ui.separator();
 
             // ── processos ───────────────────────────────────────────────
@@ -349,12 +461,18 @@ impl eframe::App for MonitorApp {
 }
 
 /// Sparkline pintada à mão — a versão egui das "sparklines próprias em SVG"
-/// do LocalMonitor oficial.
-fn chart(ui: &mut egui::Ui, hist: &VecDeque<f32>, pal: &Palette, caption: String) {
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), 110.0),
-        egui::Sense::hover(),
-    );
+/// do LocalMonitor oficial. `percent=true` fixa a escala 0–100 (CPU/mem);
+/// `false` auto-escala pelo máximo da série (rede, bytes/s).
+fn chart(
+    ui: &mut egui::Ui,
+    hist: &VecDeque<f32>,
+    pal: &Palette,
+    caption: String,
+    width: f32,
+    height: f32,
+    percent: bool,
+) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
     let p = ui.painter_at(rect);
     p.rect_filled(rect, egui::CornerRadius::same(2), pal.sunken);
 
@@ -366,6 +484,12 @@ fn chart(ui: &mut egui::Ui, hist: &VecDeque<f32>, pal: &Palette, caption: String
         );
     }
 
+    let max = if percent {
+        100.0
+    } else {
+        hist.iter().cloned().fold(0.0f32, f32::max).max(1.0)
+    };
+
     let n = hist.len();
     if n >= 2 {
         let px = rect.width() / (MAX_SAMPLES as f32 - 1.0);
@@ -374,7 +498,7 @@ fn chart(ui: &mut egui::Ui, hist: &VecDeque<f32>, pal: &Palette, caption: String
             .enumerate()
             .map(|(i, v)| {
                 let x = rect.right() - (n - 1 - i) as f32 * px;
-                let y = rect.bottom() - (v.clamp(0.0, 100.0) / 100.0) * (rect.height() - 4.0) - 2.0;
+                let y = rect.bottom() - (v.clamp(0.0, max) / max) * (rect.height() - 4.0) - 2.0;
                 egui::pos2(x, y)
             })
             .collect();
@@ -390,7 +514,7 @@ fn chart(ui: &mut egui::Ui, hist: &VecDeque<f32>, pal: &Palette, caption: String
         egui::pos2(rect.right() - 8.0, rect.top() + 6.0),
         egui::Align2::RIGHT_TOP,
         caption,
-        egui::FontId::proportional(13.0),
+        egui::FontId::proportional(12.0),
         pal.text,
     );
 }

@@ -1,19 +1,20 @@
 //! lab-clip — piloto de referência do LocalClip em egui/eframe.
-//! O teste desta onda é INTEGRAÇÃO OS sem Tauri: bandeja (`tray-icon`),
-//! atalho global (`global-hotkey`, ambos crates que o próprio Tauri usa por
-//! baixo) e poller de clipboard (`arboard` + flag de privacidade do Windows).
+//! Onda 2: integração OS sem Tauri (bandeja no Windows, atalho global,
+//! poller com a flag de privacidade). Onda 4: IMAGENS — captura → PNG na
+//! thread do poller → textura egui (cache por item, liberada ao excluir) →
+//! recopiar de volta pro clipboard. O gerenciamento de textura é parte do
+//! teste: no immediate mode, quem cria o pixel também tem que apagar.
 //!
-//! Diferenças deliberadas do oficial: só texto (sem imagem), histórico em
-//! memória (sem SQLite) e hotkey **Ctrl+Alt+V** em vez de Ctrl+Shift+V — o
-//! LocalClip instalado é dono do Ctrl+Shift+V; dois apps não registram o
-//! mesmo atalho. Fechar no X encerra de verdade (o "fechar pra bandeja" do
-//! oficial é opt-in lá, e aqui não configuramos).
+//! Diferenças deliberadas do oficial: histórico em memória (sem SQLite),
+//! hotkey **Ctrl+Alt+V** (o LocalClip instalado é dono do Ctrl+Shift+V) e
+//! bandeja só no Windows (tray-icon puxaria gtk3 no Linux — ver Cargo.toml).
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod history;
 mod poller;
 
+use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::Receiver;
 
@@ -29,7 +30,7 @@ use tray_icon::menu::{Menu, MenuItem, MenuEvent};
 #[cfg(windows)]
 use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
-use history::ClipItem;
+use history::{ClipItem, ImageItem, Payload};
 
 const APP_ID: &str = "lab-clip";
 
@@ -38,7 +39,7 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Lab Clip")
-            .with_inner_size([420.0, 560.0]),
+            .with_inner_size([440.0, 600.0]),
         ..Default::default()
     };
     eframe::run_native(
@@ -55,7 +56,11 @@ struct ClipApp {
     cfg: Config,
     items: Vec<ClipItem>,
     search: String,
-    rx: Receiver<String>,
+    rx: Receiver<ClipItem>,
+    /// Textura de miniatura por id do item — criada sob demanda, REMOVIDA ao
+    /// excluir/limpar (textura órfã é leak de VRAM: o custo de aprender isso
+    /// em immediate mode é o motivo de estar escrito aqui).
+    textures: HashMap<u64, egui::TextureHandle>,
     /// Viva enquanto o app viver: derruba a bandeja e o atalho no drop.
     #[cfg(windows)]
     _tray: TrayIcon,
@@ -99,6 +104,7 @@ impl ClipApp {
             items: Vec::new(),
             search: String::new(),
             rx,
+            textures: HashMap::new(),
             #[cfg(windows)]
             _tray: tray,
             _hotkeys: hotkeys,
@@ -122,11 +128,26 @@ impl ClipApp {
         }
     }
 
-    fn copy_out(text: &str) {
-        // O poller ignora este copy (SKIP_NEXT) — não vira item novo.
+    fn copy_out_text(text: &str) {
         poller::SKIP_NEXT.store(true, Ordering::Relaxed);
         if let Ok(mut c) = arboard::Clipboard::new() {
             let _ = c.set_text(text.to_string());
+        }
+    }
+
+    fn copy_out_image(img: &ImageItem) {
+        poller::SKIP_NEXT.store(true, Ordering::Relaxed);
+        let Ok(dec) = image::load_from_memory(&img.png) else {
+            return;
+        };
+        let rgba = dec.to_rgba8();
+        let data = arboard::ImageData {
+            width: rgba.width(),
+            height: rgba.height(),
+            bytes: std::borrow::Cow::Owned(rgba.into_raw()),
+        };
+        if let Ok(mut c) = arboard::Clipboard::new() {
+            let _ = c.set_image(data);
         }
     }
 }
@@ -159,6 +180,23 @@ fn tray_icon() -> Option<tray_icon::Icon> {
     tray_icon::Icon::from_rgba(rgba, w, h).ok()
 }
 
+/// Linha pronta pra renderizar — dados OWNED (o loop de UI muta self).
+enum RowView {
+    Text {
+        idx: usize,
+        id: u64,
+        pinned: bool,
+        preview: String,
+        full: String,
+    },
+    Image {
+        idx: usize,
+        id: u64,
+        pinned: bool,
+        img: ImageItem,
+    },
+}
+
 impl eframe::App for ClipApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // ── eventos de fora (bandeja, atalho, poller) ────────────────────
@@ -187,8 +225,8 @@ impl eframe::App for ClipApp {
                 self.toggle(ctx);
             }
         }
-        while let Ok(text) = self.rx.try_recv() {
-            history::insert(&mut self.items, text);
+        while let Ok(item) = self.rx.try_recv() {
+            history::insert(&mut self.items, item.payload);
         }
 
         // Poller fala por canal; sem repaint explícito a UI não drenaria.
@@ -197,9 +235,7 @@ impl eframe::App for ClipApp {
         egui::TopBottomPanel::top("topo").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.strong("Lab Clip");
-                ui.label(
-                    egui::RichText::new("Ctrl+Alt+V").small().weak(),
-                );
+                ui.label(egui::RichText::new("Ctrl+Alt+V").small().weak());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if lab_ui::settings_ui(ui, &mut self.cfg) {
                         theme::apply(ctx, self.cfg.theme);
@@ -230,66 +266,158 @@ impl eframe::App for ClipApp {
 
             ui.add_space(6.0);
 
+            // Busca filtra TEXTO; imagem não tem texto pra bater — só aparece
+            // com busca vazia (mesma conta do oficial).
             let needle = self.search.trim().to_lowercase();
-            let view: Vec<usize> = self
+            let view: Vec<RowView> = self
                 .items
                 .iter()
                 .enumerate()
-                .filter(|(_, i)| needle.is_empty() || i.text.to_lowercase().contains(&needle))
-                .map(|(idx, _)| idx)
+                .filter_map(|(idx, it)| match &it.payload {
+                    Payload::Text(full) => {
+                        if !needle.is_empty() && !full.to_lowercase().contains(&needle) {
+                            return None;
+                        }
+                        let preview = if full.len() > 120 {
+                            format!("{}…", &full[..120])
+                        } else {
+                            full.clone()
+                        };
+                        Some(RowView::Text {
+                            idx,
+                            id: it.id,
+                            pinned: it.pinned,
+                            preview,
+                            full: full.clone(),
+                        })
+                    }
+                    Payload::Image(img) => {
+                        if !needle.is_empty() {
+                            return None;
+                        }
+                        Some(RowView::Image {
+                            idx,
+                            id: it.id,
+                            pinned: it.pinned,
+                            img: img.clone(),
+                        })
+                    }
+                })
                 .collect();
 
-            if self.items.is_empty() {
-                ui.label(egui::RichText::new(t(Key::Empty)).weak());
-            } else if view.is_empty() {
+            if view.is_empty() {
                 ui.label(egui::RichText::new(t(Key::Empty)).weak());
             } else {
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    for idx in view {
-                        // Dados owned ANTES do closure: o closure muta self.items
-                        // (pin/delete), então nenhum borrow pode atravessá-lo.
-                        let pinned = self.items[idx].pinned;
-                        let text_full = self.items[idx].text.clone();
-                        let preview = if text_full.len() > 120 {
-                            format!("{}…", &text_full[..120])
-                        } else {
-                            text_full.clone()
-                        };
-                        ui.horizontal(|ui| {
-                            if ui
-                                .small_button(if pinned { "📌" } else { "○" })
-                                .on_hover_text(if pinned {
-                                    t(Key::Unpin)
-                                } else {
-                                    t(Key::Pin)
-                                })
-                                .clicked()
-                            {
-                                self.items[idx].pinned = !self.items[idx].pinned;
-                                // Fixado vai pro topo, como favorito.
-                                let it = self.items.remove(idx);
-                                self.items.insert(0, it);
+                    for row in &view {
+                        match row {
+                            RowView::Text {
+                                idx,
+                                id: _,
+                                pinned,
+                                preview,
+                                full,
+                            } => {
+                                ui.horizontal(|ui| {
+                                    if ui
+                                        .small_button(if *pinned { "📌" } else { "○" })
+                                        .on_hover_text(if *pinned {
+                                            t(Key::Unpin)
+                                        } else {
+                                            t(Key::Pin)
+                                        })
+                                        .clicked()
+                                    {
+                                        let i = *idx;
+                                        self.items[i].pinned = !self.items[i].pinned;
+                                        // Fixado vai pro topo, como favorito.
+                                        let it = self.items.remove(i);
+                                        self.items.insert(0, it);
+                                    }
+                                    // Clique no texto = copiar e esconder (fluxo do popup).
+                                    if ui
+                                        .selectable_label(false, preview.as_str())
+                                        .on_hover_text(t(Key::Copy))
+                                        .clicked()
+                                    {
+                                        Self::copy_out_text(full);
+                                        self.toggle(ctx);
+                                    }
+                                    if ui.small_button("⧉").on_hover_text(t(Key::Copy)).clicked() {
+                                        Self::copy_out_text(full);
+                                    }
+                                    if ui
+                                        .small_button("🗑")
+                                        .on_hover_text(t(Key::Delete))
+                                        .clicked()
+                                    {
+                                        let i = *idx;
+                                        let id = self.items[i].id;
+                                        self.items.remove(i);
+                                        self.textures.remove(&id); // textura órfã = leak de VRAM
+                                    }
+                                });
                             }
-                            // Clique no texto = copiar e esconder (fluxo do popup).
-                            if ui
-                                .selectable_label(false, &preview)
-                                .on_hover_text(t(Key::Copy))
-                                .clicked()
-                            {
-                                Self::copy_out(&text_full);
-                                self.toggle(ctx);
+                            RowView::Image { idx, id, pinned, img } => {
+                                ui.horizontal(|ui| {
+                                    if ui
+                                        .small_button(if *pinned { "📌" } else { "○" })
+                                        .on_hover_text(if *pinned {
+                                            t(Key::Unpin)
+                                        } else {
+                                            t(Key::Pin)
+                                        })
+                                        .clicked()
+                                    {
+                                        let i = *idx;
+                                        self.items[i].pinned = !self.items[i].pinned;
+                                        let it = self.items.remove(i);
+                                        self.items.insert(0, it);
+                                    }
+                                    // Miniatura: textura criada UMA vez por item.
+                                    if !self.textures.contains_key(id) {
+                                        if let Ok(dec) = image::load_from_memory(&img.png) {
+                                            let rgba = dec.to_rgba8();
+                                            let size = [rgba.width() as usize, rgba.height() as usize];
+                                            let color = egui::ColorImage::from_rgba_unmultiplied(
+                                                size, rgba.as_raw(),
+                                            );
+                                            self.textures.insert(
+                                                *id,
+                                                ctx.load_texture(
+                                                    format!("clip-{id}"),
+                                                    color,
+                                                    egui::TextureOptions::default(),
+                                                ),
+                                            );
+                                        }
+                                    }
+                                    if let Some(tex) = self.textures.get(id) {
+                                        // Clique na miniatura = copiar e esconder.
+                                        if ui
+                                            .add(egui::Image::from_texture(tex).max_width(120.0))
+                                            .on_hover_text(t(Key::Copy))
+                                            .clicked()
+                                        {
+                                            Self::copy_out_image(img);
+                                            self.toggle(ctx);
+                                        }
+                                    }
+                                    if ui.small_button("⧉").on_hover_text(t(Key::Copy)).clicked() {
+                                        Self::copy_out_image(img);
+                                    }
+                                    if ui
+                                        .small_button("🗑")
+                                        .on_hover_text(t(Key::Delete))
+                                        .clicked()
+                                    {
+                                        let i = *idx;
+                                        let removed = self.items.remove(i);
+                                        self.textures.remove(&removed.id);
+                                    }
+                                });
                             }
-                            if ui.small_button("⧉").on_hover_text(t(Key::Copy)).clicked() {
-                                Self::copy_out(&text_full);
-                            }
-                            if ui
-                                .small_button("🗑")
-                                .on_hover_text(t(Key::Delete))
-                                .clicked()
-                            {
-                                self.items.remove(idx);
-                            }
-                        });
+                        }
                     }
                 });
             }
@@ -297,17 +425,34 @@ impl eframe::App for ClipApp {
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 ui.separator();
                 ui.horizontal(|ui| {
-                    let soltos = self.items.iter().filter(|i| !i.pinned).count();
+                    let textos = self
+                        .items
+                        .iter()
+                        .filter(|i| matches!(i.payload, Payload::Text(_)) && !i.pinned)
+                        .count();
+                    let imagens = self
+                        .items
+                        .iter()
+                        .filter(|i| matches!(i.payload, Payload::Image(_)) && !i.pinned)
+                        .count();
                     ui.label(
-                        egui::RichText::new(format!("{}: {}", t(Key::Items), soltos))
+                        egui::RichText::new(format!("{}: {} · 🖼 {}", t(Key::Items), textos, imagens))
                             .small()
                             .weak(),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
-                            .add_enabled(soltos > 0, egui::Button::new(t(Key::Clear)))
+                            .add_enabled(textos + imagens > 0, egui::Button::new(t(Key::Clear)))
                             .clicked()
                         {
+                            // Textura dos que saem também tem que sair.
+                            let pinned: Vec<u64> = self
+                                .items
+                                .iter()
+                                .filter(|i| i.pinned)
+                                .map(|i| i.id)
+                                .collect();
+                            self.textures.retain(|id, _| pinned.contains(id));
                             history::clear_unpinned(&mut self.items);
                         }
                     });

@@ -1,6 +1,7 @@
 //! Motor de expressão do lab-calc — tokenizer + shunting-yard + RPN, o mesmo
-//! desenho do motor TS do LocalCalc oficial (lá são ~40 testes; aqui o núcleo
-//! do modo padrão: + - * / % ^, parênteses, menos unário, vírgula decimal PT).
+//! desenho do motor TS do LocalCalc oficial. Onda 4: funções científicas
+//! (sin/cos/tan/asin/acos/atan/sqrt/ln/log2/log10/abs), constantes pi/e,
+//! variável `ans` e modo DEG/RAD (trig converte entrada/saída).
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Tok {
@@ -12,12 +13,90 @@ enum Tok {
     Div,
     Mod,
     Pow,
+    Func(Fn),
     L,
     R,
 }
 
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Fn {
+    Sin,
+    Cos,
+    Tan,
+    Asin,
+    Acos,
+    Atan,
+    Sqrt,
+    Ln,
+    Log2,
+    Log10,
+    Abs,
+}
+
+impl Fn {
+    fn from_name(s: &str) -> Option<Fn> {
+        Some(match s {
+            "sin" => Fn::Sin,
+            "cos" => Fn::Cos,
+            "tan" => Fn::Tan,
+            "asin" => Fn::Asin,
+            "acos" => Fn::Acos,
+            "atan" => Fn::Atan,
+            "sqrt" => Fn::Sqrt,
+            "ln" => Fn::Ln,
+            "log2" => Fn::Log2,
+            "log10" => Fn::Log10,
+            "log" => Fn::Log10,
+            "abs" => Fn::Abs,
+            _ => return None,
+        })
+    }
+
+    fn apply(self, x: f64, deg: bool) -> f64 {
+        // DEG: trig de entrada converte graus→rad; inversas convertem a
+        // saída rad→graus (como o app oficial).
+        match self {
+            Fn::Sin => x.to_rad(deg).sin(),
+            Fn::Cos => x.to_rad(deg).cos(),
+            Fn::Tan => x.to_rad(deg).tan(),
+            Fn::Asin => x.asin().from_rad(deg),
+            Fn::Acos => x.acos().from_rad(deg),
+            Fn::Atan => x.atan().from_rad(deg),
+            Fn::Sqrt => x.sqrt(),
+            Fn::Ln => x.ln(),
+            Fn::Log2 => x.log2(),
+            Fn::Log10 => x.log10(),
+            Fn::Abs => x.abs(),
+        }
+    }
+}
+
+trait AngleConv: Sized {
+    fn to_rad(self, deg: bool) -> Self;
+    fn from_rad(self, deg: bool) -> Self;
+}
+impl AngleConv for f64 {
+    fn to_rad(self, deg: bool) -> Self {
+        if deg {
+            self.to_radians()
+        } else {
+            self
+        }
+    }
+    fn from_rad(self, deg: bool) -> Self {
+        if deg {
+            self.to_degrees()
+        } else {
+            self
+        }
+    }
+}
+
 fn is_op(t: Tok) -> bool {
-    matches!(t, Tok::Neg | Tok::Add | Tok::Sub | Tok::Mul | Tok::Div | Tok::Mod | Tok::Pow)
+    matches!(
+        t,
+        Tok::Neg | Tok::Add | Tok::Sub | Tok::Mul | Tok::Div | Tok::Mod | Tok::Pow | Tok::Func(_)
+    )
 }
 
 fn prec(t: Tok) -> i32 {
@@ -26,26 +105,39 @@ fn prec(t: Tok) -> i32 {
         Tok::Mul | Tok::Div | Tok::Mod => 2,
         Tok::Neg => 3,
         Tok::Pow => 4,
+        // Função prefixa: liga mais forte que ^ (sin(2)^2 = (sin 2)^2).
+        Tok::Func(_) => 5,
         _ => 0,
     }
 }
 
 fn right_assoc(t: Tok) -> bool {
-    matches!(t, Tok::Neg | Tok::Pow)
+    matches!(t, Tok::Neg | Tok::Pow | Tok::Func(_))
+}
+
+/// Contexto de avaliação: `ans` (última resposta) e unidade de ângulo.
+#[derive(Clone, Copy, Default)]
+pub struct Ctx {
+    pub ans: Option<f64>,
+    pub degrees: bool,
 }
 
 pub fn eval(input: &str) -> Result<f64, String> {
+    eval_with(input, &Ctx::default())
+}
+
+pub fn eval_with(input: &str, ctx: &Ctx) -> Result<f64, String> {
     // Vírgula decimal PT vira ponto (o app oficial aceita as duas).
     let src: String = input
         .chars()
         .map(|c| if c == ',' { '.' } else { c })
         .collect();
-    let toks = tokenize(&src)?;
+    let toks = tokenize(&src, ctx)?;
     let rpn = to_postfix(&toks)?;
-    eval_rpn(&rpn)
+    eval_rpn(&rpn, ctx.degrees)
 }
 
-fn tokenize(s: &str) -> Result<Vec<Tok>, String> {
+fn tokenize(s: &str, ctx: &Ctx) -> Result<Vec<Tok>, String> {
     let mut out = Vec::new();
     let mut chars = s.chars().peekable();
     let mut expect_operand = true;
@@ -71,6 +163,47 @@ fn tokenize(s: &str) -> Result<Vec<Tok>, String> {
                 let v: f64 = n.parse().map_err(|_| "número inválido")?;
                 out.push(Tok::Num(v));
                 expect_operand = false;
+            }
+            'a'..='z' | 'A'..='Z' | 'π' => {
+                if !expect_operand {
+                    return Err("identificador inesperado".into());
+                }
+                // π é atalho pra pi no teclado/digitado
+                let mut word = String::new();
+                if c == 'π' {
+                    word.push_str("pi");
+                    chars.next();
+                } else {
+                    while let Some(&d) = chars.peek() {
+                        if d.is_ascii_alphabetic() {
+                            word.push(d);
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                match word.as_str() {
+                    "pi" => {
+                        out.push(Tok::Num(std::f64::consts::PI));
+                        expect_operand = false;
+                    }
+                    "e" => {
+                        out.push(Tok::Num(std::f64::consts::E));
+                        expect_operand = false;
+                    }
+                    "ans" => {
+                        let v = ctx
+                            .ans
+                            .ok_or_else(|| "ans ainda não tem valor (faça uma conta)".to_string())?;
+                        out.push(Tok::Num(v));
+                        expect_operand = false;
+                    }
+                    _ => match Fn::from_name(&word) {
+                        Some(f) => out.push(Tok::Func(f)), // continua esperando operando
+                        None => return Err(format!("desconheço '{word}'")),
+                    },
+                }
             }
             '(' => {
                 if !expect_operand {
@@ -158,7 +291,7 @@ fn to_postfix(toks: &[Tok]) -> Result<Vec<Tok>, String> {
     Ok(out)
 }
 
-fn eval_rpn(rpn: &[Tok]) -> Result<f64, String> {
+fn eval_rpn(rpn: &[Tok], deg: bool) -> Result<f64, String> {
     fn pop(st: &mut Vec<f64>) -> Result<f64, String> {
         st.pop().ok_or_else(|| "expressão incompleta".to_string())
     }
@@ -170,6 +303,10 @@ fn eval_rpn(rpn: &[Tok]) -> Result<f64, String> {
             Tok::Neg => {
                 let a = pop(&mut st)?;
                 st.push(-a);
+            }
+            Tok::Func(f) => {
+                let a = pop(&mut st)?;
+                st.push(f.apply(a, deg));
             }
             Tok::Add | Tok::Sub | Tok::Mul | Tok::Div | Tok::Mod | Tok::Pow => {
                 let b = pop(&mut st)?;
@@ -266,6 +403,8 @@ mod tests {
         assert!(eval("()").is_err());
         assert!(eval("abc").is_err());
         assert!(eval("1..2").is_err());
+        assert!(eval("sin").is_err()); // função sem operando
+        assert!(eval("1+sin").is_err());
     }
 
     #[test]
@@ -274,5 +413,66 @@ mod tests {
         assert_eq!(fmt_num(42.0), "42");
         assert_eq!(fmt_num(2.0 / 3.0), "0.6666666667");
         assert_eq!(fmt_num(f64::INFINITY), "—");
+    }
+
+    // ── científica (onda 4) ───────────────────────────────────────────
+
+    #[test]
+    fn funcoes_basicas() {
+        ok("sqrt(9)", 3.0);
+        ok("abs(-5)", 5.0);
+        ok("ln(e)", 1.0);
+        ok("log2(8)", 3.0);
+        ok("log10(1000)", 3.0);
+        ok("log(1000)", 3.0); // log = log10
+    }
+
+    #[test]
+    fn trig_em_rad() {
+        ok("sin(0)", 0.0);
+        ok("cos(0)", 1.0);
+        assert!((eval("tan(pi/4)").unwrap() - 1.0).abs() < 1e-9);
+        assert!((eval("asin(1)").unwrap() - std::f64::consts::FRAC_PI_2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn trig_em_graus() {
+        let deg = Ctx {
+            ans: None,
+            degrees: true,
+        };
+        let v = eval_with("sin(180)", &deg).unwrap();
+        assert!(v.abs() < 1e-9, "sin(180°) = {v}");
+        let v = eval_with("cos(180)", &deg).unwrap();
+        assert!((v + 1.0).abs() < 1e-9);
+        let v = eval_with("asin(1)", &deg).unwrap();
+        assert!((v - 90.0).abs() < 1e-9, "asin(1) em graus = {v}");
+    }
+
+    #[test]
+    fn precedencia_de_funcao() {
+        ok("sin(0)^2", 0.0); // (sin 0)^2, não sin(0²)? — ambos 0
+        assert!((eval("sqrt(4)+1").unwrap() - 3.0).abs() < 1e-9);
+        assert!((eval("2*sqrt(9)").unwrap() - 6.0).abs() < 1e-9);
+        assert!((eval("-sqrt(9)").unwrap() + 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn constantes() {
+        assert!((eval("pi").unwrap() - std::f64::consts::PI).abs() < 1e-12);
+        assert!((eval("2*pi").unwrap() - 2.0 * std::f64::consts::PI).abs() < 1e-12);
+        assert!((eval("π*2").unwrap() - 2.0 * std::f64::consts::PI).abs() < 1e-12);
+    }
+
+    #[test]
+    fn ans_funciona() {
+        let ctx = Ctx {
+            ans: Some(21.0),
+            degrees: false,
+        };
+        assert!((eval_with("ans*2", &ctx).unwrap() - 42.0).abs() < 1e-9);
+        assert!((eval_with("ans+ans", &ctx).unwrap() - 42.0).abs() < 1e-9);
+        // sem ans: erro claro, não pânico
+        assert!(eval_with("ans*2", &Ctx::default()).is_err());
     }
 }

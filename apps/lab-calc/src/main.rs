@@ -1,8 +1,7 @@
 //! lab-calc — piloto de referência do LocalCalc em egui/eframe.
-//! Escopo da onda 1: modo padrão (expressão livre + preview ao vivo +
-//! histórico em memória + teclado). Sem científica/programador/conversor:
-//! o objetivo é validar o port do "padrão" (tema/i18n/config) e a ergonomia
-//! de forms/teclado no egui, não paridade com o app oficial.
+//! Onda 1: modo padrão (expressão livre + preview ao vivo + histórico).
+//! Onda 4: científica — sin/cos/tan/√/ln/π/e, `ans` e DEG/RAD (mesmo motor
+//! do oficial: tokenizer + shunting-yard, agora com funções).
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -20,7 +19,7 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Lab Calc")
-            .with_inner_size([400.0, 640.0]),
+            .with_inner_size([400.0, 700.0]),
         ..Default::default()
     };
     eframe::run_native(
@@ -38,6 +37,8 @@ struct CalcApp {
     expr: String,
     result: Option<String>,
     history: Vec<(String, String)>,
+    ans: Option<f64>,
+    degrees: bool,
 }
 
 impl CalcApp {
@@ -47,6 +48,15 @@ impl CalcApp {
             expr: String::new(),
             result: None,
             history: Vec::new(),
+            ans: None,
+            degrees: false,
+        }
+    }
+
+    fn ctx(&self) -> engine::Ctx {
+        engine::Ctx {
+            ans: self.ans,
+            degrees: self.degrees,
         }
     }
 
@@ -55,8 +65,10 @@ impl CalcApp {
         if src.is_empty() {
             return;
         }
-        match engine::eval(&src) {
+        match engine::eval_with(&src, &self.ctx()) {
             Ok(v) => {
+                // ans vira a última resposta CONFIRMADA (preview não conta).
+                self.ans = Some(v);
                 let out = engine::fmt_num(v);
                 self.result = Some(out.clone());
                 self.history.insert(0, (src, out));
@@ -123,7 +135,48 @@ impl eframe::App for CalcApp {
 
             ui.add_space(6.0);
 
-            // Teclado: 5 colunas; ÷ × − são display, entra o operador real.
+            // Linha de modo: DEG/RAD + indício do ans.
+            ui.horizontal(|ui| {
+                if ui
+                    .selectable_label(self.degrees, if self.degrees { "DEG" } else { "RAD" })
+                    .clicked()
+                {
+                    self.degrees = !self.degrees;
+                }
+                if let Some(a) = self.ans {
+                    ui.label(
+                        egui::RichText::new(format!("ans = {}", engine::fmt_num(a)))
+                            .small()
+                            .weak(),
+                    );
+                }
+            });
+
+            ui.add_space(4.0);
+
+            // Teclado científico: botão insere o texto (funções já com "(").
+            egui::Grid::new("sci")
+                .num_columns(5)
+                .min_col_width(44.0)
+                .spacing([6.0, 4.0])
+                .show(ui, |ui| {
+                    let rows: [[&str; 5]; 2] = [
+                        ["sin(", "cos(", "tan(", "√", "ln("],
+                        ["asin(", "acos(", "atan(", "log2(", "abs("],
+                    ];
+                    for row in rows {
+                        for label in row {
+                            if ui.button(label).clicked() {
+                                self.key(label);
+                            }
+                        }
+                        ui.end_row();
+                    }
+                });
+
+            ui.add_space(4.0);
+
+            // Teclado padrão: 5 colunas.
             egui::Grid::new("pad")
                 .num_columns(5)
                 .min_col_width(44.0)
@@ -144,6 +197,19 @@ impl eframe::App for CalcApp {
                         ui.end_row();
                     }
                 });
+
+            // π e e entram como texto do motor (mesma coisa que digitar).
+            ui.horizontal(|ui| {
+                if ui.button("π").clicked() {
+                    self.expr.push_str("pi");
+                }
+                if ui.button("e").clicked() {
+                    self.expr.push('e');
+                }
+                if ui.button("ans").clicked() {
+                    self.expr.push_str("ans");
+                }
+            });
 
             ui.add_space(6.0);
             if ui
@@ -181,7 +247,7 @@ impl CalcApp {
         if self.expr.trim().is_empty() {
             return None;
         }
-        engine::eval(&self.expr).ok()
+        engine::eval_with(&self.expr, &self.ctx()).ok()
     }
 
     fn key(&mut self, label: &str) {
@@ -193,6 +259,7 @@ impl CalcApp {
             "DEL" => {
                 self.expr.pop();
             }
+            "√" => self.expr.push_str("sqrt("),
             "/" => self.expr.push('/'),
             "*" => self.expr.push('*'),
             "-" => self.expr.push('-'),

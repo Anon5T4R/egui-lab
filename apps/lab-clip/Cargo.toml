@@ -9,6 +9,7 @@ eframe.workspace = true
 egui.workspace = true
 lab-ui = { path = "../../crates/lab-ui" }
 arboard.workspace = true
+image.workspace = true
 global-hotkey.workspace = true
 
 [target.'cfg(windows)'.dependencies]

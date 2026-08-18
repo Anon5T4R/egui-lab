@@ -32,6 +32,8 @@ pub struct ItemView {
     pub id: String,
     pub name: String,
     pub username: Option<String>,
+    /// Segredo TOTP (base32) se o item tiver — a UI gera o código ao vivo.
+    pub totp: Option<String>,
     pub favorite: bool,
 }
 
@@ -49,6 +51,7 @@ struct RawItem {
 #[serde(default)]
 struct RawLogin {
     username: String,
+    totp: String,
 }
 
 /// Visão de lista do vault (lixeira — `deletedAt` — fica fora, como no oficial).
@@ -65,7 +68,10 @@ pub fn items_view(raw: &Value) -> Vec<ItemView> {
                     Some(ItemView {
                         id: ri.id,
                         name: ri.name,
-                        username: ri.login.map(|l| l.username),
+                        username: ri.login.as_ref().map(|l| l.username.clone()),
+                        totp: ri
+                            .login
+                            .and_then(|l| if l.totp.is_empty() { None } else { Some(l.totp) }),
                         favorite: ri.favorite,
                     })
                 })
@@ -111,8 +117,8 @@ pub fn add_login(raw: &mut Value, name: &str, username: &str, password: &str) {
         .push(item);
 }
 
-/// `(username, password)` do login pelo id — só leitura, para o botão copiar.
-pub fn login_pair(raw: &Value, id: &str) -> Option<(String, String)> {
+/// `(username, password, totp)` do login pelo id — só leitura.
+pub fn login_triple(raw: &Value, id: &str) -> Option<(String, String, String)> {
     raw.get("items")?
         .as_array()?
         .iter()
@@ -125,8 +131,68 @@ pub fn login_pair(raw: &Value, id: &str) -> Option<(String, String)> {
             Some((
                 login.get("username").and_then(Value::as_str)?.to_string(),
                 login.get("password").and_then(Value::as_str)?.to_string(),
+                login
+                    .get("totp")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
             ))
         })
+}
+
+/// EDITA um item existente (por id) — mesma escrita conservadora do add: só
+/// toca nos campos do próprio item, tudo ao redor atravessa intacto.
+pub fn edit_login(
+    raw: &mut Value,
+    id: &str,
+    name: &str,
+    username: &str,
+    password: &str,
+    totp: &str,
+) -> bool {
+    let Some(items) = raw.get_mut("items").and_then(Value::as_array_mut) else {
+        return false;
+    };
+    for it in items.iter_mut() {
+        if it.get("id").and_then(Value::as_str) != Some(id) {
+            continue;
+        }
+        it["name"] = json!(name);
+        it["updatedAt"] = json!(now_ms());
+        // login pode não existir em item de outra classe → cria com a forma
+        // completa (uris vazios, como o emptyItem do oficial).
+        if !it.get("login").is_some_and(Value::is_object) {
+            it["login"] = json!({ "username": "", "password": "", "uris": [""], "totp": "" });
+        }
+        if let Some(login) = it.get_mut("login").and_then(Value::as_object_mut) {
+            login.insert("username".into(), json!(username));
+            login.insert("password".into(), json!(password));
+            login.insert("totp".into(), json!(totp));
+        }
+        return true;
+    }
+    false
+}
+
+/// Exclusão LÓGICA (lixeira do oficial): marca `deletedAt`, não remove — um
+/// `.tkeys` aberto no LocalKeys continua vendo o item na lixeira.
+pub fn delete_login(raw: &mut Value, id: &str) -> bool {
+    let Some(items) = raw.get_mut("items").and_then(Value::as_array_mut) else {
+        return false;
+    };
+    for it in items.iter_mut() {
+        if it.get("id").and_then(Value::as_str) == Some(id) {
+            it["deletedAt"] = json!(now_ms());
+            it["updatedAt"] = json!(now_ms());
+            return true;
+        }
+    }
+    false
+}
+
+/// `(username, password)` do login pelo id — só leitura, para o botão copiar.
+pub fn login_pair(raw: &Value, id: &str) -> Option<(String, String)> {
+    login_triple(raw, id).map(|(u, p, _)| (u, p))
 }
 
 #[cfg(test)]
@@ -189,6 +255,72 @@ mod tests {
         assert_eq!(v["items"][0]["customFields"].as_array().unwrap().len(), 2);
         assert_eq!(v["items"][0]["attachments"][0]["mime"], "image/png");
         assert_eq!(v["items"][1]["login"]["password"], "p");
+    }
+
+    #[test]
+    fn view_mostra_totp_quando_existe() {
+        let mut v = vault_com_item();
+        v["items"][0]["login"]["totp"] = json!("JBSWY3DPEHPK3PXP");
+        let items = items_view(&v);
+        assert_eq!(items[0].totp.as_deref(), Some("JBSWY3DPEHPK3PXP"));
+
+        let mut v2 = vault_com_item(); // sem totp
+        v2["items"][0]["login"]["totp"] = json!("");
+        assert!(items_view(&v2)[0].totp.is_none());
+    }
+
+    #[test]
+    fn edita_login_sem_derrubar_o_resto() {
+        let mut v: Value = serde_json::from_str(
+            r#"{"version":1,"folders":[{"id":"f1","name":"Pessoal"}],
+               "items":[{"id":"x","kind":"login","name":"Antigo","favorite":true,"folderId":"f1",
+                          "notes":"keep me","createdAt":1,"updatedAt":1,"deletedAt":null,
+                          "login":{"username":"u","password":"p","uris":["https://a"],"totp":""}}]}"#,
+        )
+        .unwrap();
+        assert!(edit_login(&mut v, "x", "Novo", "user2", "pass2", "JBSWY3DPEHPK3PXP"));
+        let it = &v["items"][0];
+        assert_eq!(it["name"], "Novo");
+        assert_eq!(it["login"]["username"], "user2");
+        assert_eq!(it["login"]["password"], "pass2");
+        assert_eq!(it["login"]["totp"], "JBSWY3DPEHPK3PXP");
+        // o que NÃO foi editado atravessa intacto
+        assert_eq!(it["favorite"], true);
+        assert_eq!(it["folderId"], "f1");
+        assert_eq!(it["notes"], "keep me");
+        assert_eq!(it["login"]["uris"][0], "https://a");
+        assert_eq!(v["folders"][0]["name"], "Pessoal");
+        // id inexistente: false e nada muda
+        assert!(!edit_login(&mut v, "não-existe", "n", "u", "p", ""));
+        assert_eq!(it["name"], "Novo");
+    }
+
+    #[test]
+    fn editar_item_sem_login_cria_o_login() {
+        // note/card não têm login; se o usuário "editar" um desses no lab,
+        // o login nasce com a forma completa do oficial.
+        let mut v: Value = serde_json::from_str(
+            r#"{"version":1,"folders":[],"items":[{"id":"n1","kind":"note","name":"nota",
+               "favorite":false,"folderId":null,"notes":"","createdAt":1,"updatedAt":1,"deletedAt":null}]}"#,
+        )
+        .unwrap();
+        assert!(edit_login(&mut v, "n1", "nota", "u", "p", ""));
+        assert_eq!(v["items"][0]["login"]["username"], "u");
+        assert_eq!(v["items"][0]["login"]["uris"], json!([""]));
+        assert_eq!(v["items"][0]["kind"], "note"); // classe intacta
+    }
+
+    #[test]
+    fn exclusao_e_logica_e_some_da_view() {
+        let mut v = vault_com_item();
+        let id = v["items"][0]["id"].as_str().unwrap().to_string();
+        assert!(delete_login(&mut v, &id));
+        // linha continua no JSON (lixeira do oficial)...
+        assert_eq!(v["items"].as_array().unwrap().len(), 1);
+        assert!(v["items"][0]["deletedAt"].is_number());
+        // ...mas fora da lista
+        assert!(items_view(&v).is_empty());
+        assert!(!delete_login(&mut v, "não-existe"));
     }
 
     #[test]
