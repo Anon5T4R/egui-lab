@@ -31,6 +31,11 @@
 //! A chave derivada nunca toca o disco nem o front-end; vive só no back-end e é
 //! apagada da memória (`Zeroizing`) assim que sai de escopo.
 
+// Mantido verbatim de propósito: funções da API original (troca de senha,
+// desbloqueio por chave etc.) que o LAB ainda não usa não podem ser apagadas
+// nem gerar warnings — a regra aqui é "idêntico ao original".
+#![allow(dead_code)]
+
 use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};

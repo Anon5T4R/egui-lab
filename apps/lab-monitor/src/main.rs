@@ -266,60 +266,54 @@ impl eframe::App for MonitorApp {
             ui.add_space(4.0);
 
             let rows = self.rows();
-            egui::ScrollArea::vertical().show_rows(
-                ui,
-                ui.text_style_height(&egui::TextStyle::Body),
-                rows.len(),
-                |ui| {
-                    egui::Grid::new("procs")
-                        .num_columns(5)
-                        .spacing([10.0, 4.0])
-                        .striped(true)
-                        .show(ui, |ui| {
-                            // cabeçalho clicável (ordenação)
-                            let head = |ui: &mut egui::Ui,
-                                        col: SortCol,
-                                        label: &str,
-                                        app: &mut MonitorApp| {
-                                let mark = if app.sort == col {
-                                    if app.sort_desc { " ▾" } else { " ▴" }
-                                } else {
-                                    ""
-                                };
-                                if ui
-                                    .selectable_label(app.sort == col, format!("{label}{mark}"))
-                                    .clicked()
-                                {
-                                    app.toggle_sort(col);
-                                }
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                egui::Grid::new("procs")
+                    .num_columns(5)
+                    .spacing([10.0, 4.0])
+                    .striped(true)
+                    .show(ui, |ui| {
+                        // cabeçalho clicável (ordenação)
+                        let head = |ui: &mut egui::Ui,
+                                    col: SortCol,
+                                    label: &str,
+                                    app: &mut MonitorApp| {
+                            let mark = if app.sort == col {
+                                if app.sort_desc { " ▾" } else { " ▴" }
+                            } else {
+                                ""
                             };
-                            head(ui, SortCol::Name, t(Key::Name), self);
-                            head(ui, SortCol::Pid, "PID", self);
-                            head(ui, SortCol::Cpu, "CPU", self);
-                            head(ui, SortCol::Mem, "MB", self);
-                            ui.label("");
-                            ui.end_row();
-
-                            for r in &rows {
-                                ui.label(&r.name);
-                                ui.label(r.pid.to_string());
-                                ui.label(format!("{:.1}%", r.cpu));
-                                ui.label(format!("{:.0}", r.mem_kb as f64 / 1024.0));
-                                // Encerrar abre confirmação — mesma regra do
-                                // app oficial (trabalho não salvo se perde).
-                                if ui
-                                    .add(egui::Button::new(t(Key::End)).small())
-                                    .on_hover_text(format!("{}: {}", r.pid, r.name))
-                                    .clicked()
-                                {
-                                    self.kill_ask = Some((r.pid, r.name.clone()));
-                                }
-                                ui.end_row();
+                            if ui
+                                .selectable_label(app.sort == col, format!("{label}{mark}"))
+                                .clicked()
+                            {
+                                app.toggle_sort(col);
                             }
-                        });
-                },
-            );
-        });
+                        };
+                        head(ui, SortCol::Name, t(Key::Name), self);
+                        head(ui, SortCol::Pid, "PID", self);
+                        head(ui, SortCol::Cpu, "CPU", self);
+                        head(ui, SortCol::Mem, "MB", self);
+                        ui.label("");
+                        ui.end_row();
+
+                        for r in &rows {
+                            ui.label(&r.name);
+                            ui.label(r.pid.to_string());
+                            ui.label(format!("{:.1}%", r.cpu));
+                            ui.label(format!("{:.0}", r.mem_kb as f64 / 1024.0));
+                            // Encerrar abre confirmação — mesma regra do
+                            // app oficial (trabalho não salvo se perde).
+                            if ui
+                                .add(egui::Button::new(t(Key::End)).small())
+                                .on_hover_text(format!("{}: {}", r.pid, r.name))
+                                .clicked()
+                            {
+                                self.kill_ask = Some((r.pid, r.name.clone()));
+                            }
+                            ui.end_row();
+                        }
+                    });
+            });
 
         // ── diálogo de confirmação de encerramento ─────────────────────
         if let Some((pid, name)) = self.kill_ask.clone() {
@@ -338,8 +332,8 @@ impl eframe::App for MonitorApp {
                         if ui.button(t(Key::Confirm)).clicked() {
                             // `let _`: compatível com bool (sysinfo ≤0.34) e
                             // Result (0.35+) — o refresh seguinte mostra o
-                            // resultado de verdade.
-                            if let Some(p) = self.sys.process_mut(pid) {
+                            // resultado de verdade. (0.33: kill(&self).)
+                            if let Some(p) = self.sys.process(pid) {
                                 let _ = p.kill();
                             }
                             self.kill_ask = None;
@@ -385,7 +379,7 @@ fn chart(ui: &mut egui::Ui, hist: &VecDeque<f32>, pal: &Palette, caption: String
             .collect();
         // line_segment tem assinatura estável (Into<Stroke>); Painter::line
         // migrou pra PathStroke em 0.31 — segmentos evitam a dependência disso.
-        let stroke = egui::Stroke::new(2.0, pal.accent);
+        let stroke = egui::Stroke::new(2.0_f32, pal.accent);
         for pair in pts.windows(2) {
             p.line_segment([pair[0], pair[1]], stroke);
         }
