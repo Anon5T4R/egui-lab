@@ -174,8 +174,10 @@ fn tokenize(s: &str, ctx: &Ctx) -> Result<Vec<Tok>, String> {
                     word.push_str("pi");
                     chars.next();
                 } else {
+                    // Palavra = letra seguida de alfanuméricos: "log10", "log2",
+                    // "asin"… (o teste do CI pegou "log10" virando log+10.)
                     while let Some(&d) = chars.peek() {
-                        if d.is_ascii_alphabetic() {
+                        if d.is_ascii_alphanumeric() {
                             word.push(d);
                             chars.next();
                         } else {
