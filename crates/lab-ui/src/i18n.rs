@@ -69,6 +69,10 @@ pub enum Key {
     Lock,
 }
 
+/// Todas as chaves — usado pelo teste de completude (fora de teste o match
+/// exaustivo do `t()` já cobre; o const fica silenciado pra não warnar na
+/// build da lib).
+#[cfg_attr(not(test), allow(dead_code))]
 const KEYS: &[Key] = &[
     Key::Language,
     Key::Theme,

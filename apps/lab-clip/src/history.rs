@@ -11,15 +11,21 @@ pub struct ClipItem {
     pub pinned: bool,
 }
 
-/// Insere no topo; se o texto já existia (fixado ou não), a cópia antiga sai —
-/// o item "atual" é sempre o mais recente no topo.
+/// Insere no topo; se o texto já existia, a cópia antiga sai — mas o PIN
+/// atravessa (o oficial faz `UPDATE created_ms WHERE hash`: a linha é a
+/// mesma, só renasce no topo; desafixar é só pelo botão).
 pub fn insert(items: &mut Vec<ClipItem>, text: String) {
+    let was_pinned = items
+        .iter()
+        .find(|i| i.text == text)
+        .map(|i| i.pinned)
+        .unwrap_or(false);
     items.retain(|i| i.text != text);
     items.insert(
         0,
         ClipItem {
             text,
-            pinned: false,
+            pinned: was_pinned,
         },
     );
     // Fixados não contam pro teto: nunca apertam o espaço dos soltos.
@@ -99,9 +105,11 @@ mod tests {
         }
         v[0].pinned = true; // o mais novo vira fixado
         insert(&mut v, "novo".into());
-        assert_eq!(v.len(), MAX_ITEMS); // 1 fixado + (MAX-1) soltos + novo... conferindo por classe:
+        // 1 fixado + 500 soltos = 501 itens: a invariante é SOLTOS ≤ MAX,
+        // não o total (fixado não conta pro teto).
+        assert_eq!(v.len(), MAX_ITEMS + 1);
         let soltos = v.iter().filter(|i| !i.pinned).count();
-        assert!(soltos <= MAX_ITEMS);
+        assert_eq!(soltos, MAX_ITEMS);
         assert!(v.iter().any(|i| i.text == "s0")); // antigo solto pode sair
         assert!(v.iter().any(|i| i.pinned && i.text == "s499")); // fixado fica
     }
