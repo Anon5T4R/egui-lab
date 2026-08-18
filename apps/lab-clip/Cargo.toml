@@ -1,0 +1,17 @@
+[package]
+name = "lab-clip"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+eframe.workspace = true
+egui.workspace = true
+lab-ui = { path = "../../crates/lab-ui" }
+arboard.workspace = true
+tray-icon.workspace = true
+global-hotkey.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# Leitura da flag ExcludeClipboardContentFromMonitorProcessing (privacidade)
+clipboard-win = "5.4"
