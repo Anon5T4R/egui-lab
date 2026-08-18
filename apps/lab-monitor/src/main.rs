@@ -60,10 +60,10 @@ impl MonitorApp {
     }
 
     fn refresh(&mut self) {
-        self.sys.refresh_cpu();
+        self.sys.refresh_cpu_all();
         self.sys.refresh_memory();
 
-        let cores: Vec<f32> = self.sys.cpus().iter().map(|c| c.usage()).collect();
+        let cores: Vec<f32> = self.sys.cpus().iter().map(|c| c.cpu_usage()).collect();
         let cpu = if cores.is_empty() {
             0.0
         } else {
