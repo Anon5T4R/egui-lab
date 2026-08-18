@@ -798,7 +798,7 @@ impl KeysApp {
                             .on_hover_text(t(Key::Copy))
                             .clicked()
                         {
-                            if let Some((_, pass, _) = self
+                            if let Some((_, pass, _)) = self
                                 .raw
                                 .as_ref()
                                 .and_then(|r| vault::login_triple(r, id))

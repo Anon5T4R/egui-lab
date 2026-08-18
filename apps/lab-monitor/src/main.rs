@@ -480,7 +480,7 @@ fn chart(
         let y = rect.bottom() - rect.height() * frac;
         p.line_segment(
             [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
-            egui::Stroke::new(1.0, pal.grid()),
+            egui::Stroke::new(1.0_f32, pal.grid()),
         );
     }
 
