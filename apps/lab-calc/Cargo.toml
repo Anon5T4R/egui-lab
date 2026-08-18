@@ -1,0 +1,9 @@
+[package]
+name = "lab-calc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+eframe.workspace = true
+lab-ui = { path = "../../crates/lab-ui" }
