@@ -99,7 +99,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # --repo explícito: sem checkout o gh tenta achar o origin no git
           gh release create "${GITHUB_REF_NAME}" \
+            --repo "$GITHUB_REPOSITORY" \
             --title "egui-lab ${GITHUB_REF_NAME}" \
             --notes "Pilotos egui/eframe da avaliação da suíte: Monitor (gráficos+processos), Calc (expressões), Clip (tray+atalho global+poller), Keys (cofre .tkeys REAL do LocalKeys). Avaliação — não substitui os apps oficiais. Windows: .zip com .exe estático (sem dependência de VC++). Linux: AppImage (libs de GPU do host)." \
             dist/windows/* dist/linux/*
