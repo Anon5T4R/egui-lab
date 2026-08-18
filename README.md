@@ -69,6 +69,23 @@ leitura: o terreno onde o webview ganha com folga.
    copiar senha/usuário, acrescentar login (escrita conservadora — só
    acrescenta; pastas/anexos/campos custom atravessam intactos), trancar
    (botão ou ao minimizar, regra do oficial).
+4. **Onda 4 (feita — "deixar pronto"):** os quatro pilotos fecham as lacunas
+   que faltavam pra se sentirem completos:
+   - `lab-calc`: **científica** — sin/cos/tan/asin/acos/atan/sqrt/ln/log2/
+     log10/abs, π/e, `ans` e **DEG/RAD** (trig converte entrada/saída).
+   - `lab-monitor`: **rede** (↓/ú por segundo com histórico, escala
+     automática) e **discos** (barra de uso por volume) — paridade de
+     features com o v0.1 do oficial.
+   - `lab-clip`: **imagens** — captura → PNG codificado na thread do poller →
+     miniatura como textura egui (cache por item, liberada ao excluir;
+     gerenciar textura é parte do teste) → recopiar de volta. Teto próprio
+     de 20 imagens (RAM manda).
+   - `lab-keys`: **TOTP ao vivo** (código + contagem, copiar com exclusão de
+     histórico; `totp.rs` copiado verbatim — vetores do RFC 6238 inclusos),
+     **desbloqueio rápido** (chave derivada no Credential Manager via
+     keyring, opt-in com "esquecer chave" — só no Windows), **editar** item
+     e **excluir** (lixeira lógica `deletedAt`, cofre continua válido no
+     LocalKeys oficial).
 
 ## Releases
 
@@ -83,9 +100,10 @@ Tag `vX.Y.Z` → `release.yml` publica na GitHub Release:
 Gotchas conhecidos do lab: `lab-keys` roda o Argon2 na thread da UI (~300 ms
 de freeze no destrancar — o oficial usa command async); `lab-clip` encerra no
 X (o "fechar pra bandeja" do oficial é opt-in e não configuramos); diálogos de
-arquivo nativos e **bandeja só no Windows** — no Linux o `tray-icon` puxaria
-muda/gtk3 (glib-sys) pro AppImage, então lá o lab-clip vive só de atalho
-global (X11) + janela (mesma política do rfd: caminho digitado no lab-keys).
+arquivo nativos, **bandeja e desbloqueio rápido só no Windows** — no Linux o
+`tray-icon` puxaria muda/gtk3 e o keyring puxaria libdbus (o runner nem tem
+dbus-1 dev), então lá o lab-clip vive de atalho global (X11) + janela e o
+lab-keys pede a master sempre (mesma política do rfd: AppImage enxuto).
 
 ## Critérios de decisão (go/no-go)
 
