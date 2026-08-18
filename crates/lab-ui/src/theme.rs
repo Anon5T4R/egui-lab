@@ -5,6 +5,11 @@
 
 use egui::Color32;
 
+/// Atalho de módulo: `theme::apply(ctx, cfg.theme)` (equivale a `cfg.theme.apply(ctx)`).
+pub fn apply(ctx: &egui::Context, theme: Theme) {
+    theme.apply(ctx);
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Theme {
     Nature,
