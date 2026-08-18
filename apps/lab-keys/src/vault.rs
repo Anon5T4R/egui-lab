@@ -290,9 +290,12 @@ mod tests {
         assert_eq!(it["notes"], "keep me");
         assert_eq!(it["login"]["uris"][0], "https://a");
         assert_eq!(v["folders"][0]["name"], "Pessoal");
-        // id inexistente: false e nada muda
+        // id inexistente: false e nada muda (compara o item antes/depois —
+        // sem segurar borrow imutável através do &mut)
+        let antes = serde_json::to_string(&v["items"][0]).unwrap();
         assert!(!edit_login(&mut v, "não-existe", "n", "u", "p", ""));
-        assert_eq!(it["name"], "Novo");
+        let depois = serde_json::to_string(&v["items"][0]).unwrap();
+        assert_eq!(antes, depois);
     }
 
     #[test]

@@ -735,7 +735,7 @@ impl KeysApp {
                                     Ok(code) => {
                                         ui.horizontal(|ui| {
                                             ui.label(
-                                                egui::RichText::new(code.code)
+                                                egui::RichText::new(code.code.clone())
                                                     .monospace()
                                                     .strong(),
                                             );
@@ -845,7 +845,7 @@ impl KeysApp {
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     #[cfg(windows)]
-                    if self.quick_ativa && ui.button(t(Key::ForgetKey)).small().clicked() {
+                    if self.quick_ativa && ui.small_button(t(Key::ForgetKey)).clicked() {
                         self.forget_quick_key();
                     }
                 });
