@@ -88,14 +88,23 @@ impl eframe::App for CalcApp {
 
             // Resultado (ou erro) da última conta, grande, à direita; sem conta,
             // mostra o preview ao vivo do que está digitado.
+            //
+            // GOTCHA do lab (custou a janela vazia da v0.1.0): `with_layout`
+            // solto num painel vertical USA TODO O ESPAÇO DISPONÍVEL como
+            // min_rect (doc do egui: "If you don't want to use up all available
+            // space, use allocate_ui_with_layout") — tudo que vinha depois era
+            // empurrado pra fora da janela. Dentro de um `horizontal` ele só
+            // come a LINHA, que é o que queremos. Mesma regra dos outros apps.
             let shown = self.result.clone().unwrap_or_else(|| {
                 self.preview()
                     .map(|v| format!("= {}", engine::fmt_num(v)))
                     .unwrap_or_default()
             });
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.set_min_height(38.0);
-                ui.label(egui::RichText::new(shown).size(26.0).strong());
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.set_min_height(38.0);
+                    ui.label(egui::RichText::new(shown).size(26.0).strong());
+                });
             });
 
             ui.add_space(4.0);

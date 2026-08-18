@@ -471,6 +471,9 @@ impl KeysApp {
         } else {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for (id, name, username, favorite) in view {
+                    // Botões JUNTO do item (feedback do teste v0.1.0: na borda
+                    // direita ficavam longe do serviço). Label textual em vez
+                    // de ícone: a fonte default do egui não tem emoji garantido.
                     ui.horizontal(|ui| {
                         if *favorite {
                             ui.label("★");
@@ -481,45 +484,42 @@ impl KeysApp {
                                 ui.label(egui::RichText::new(u).small().weak());
                             }
                         });
-                        ui.with_layout(
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                                if ui
-                                    .small_button(t(Key::Password))
-                                    .on_hover_text(t(Key::Copy))
-                                    .clicked()
+                        if username.is_some() {
+                            if ui
+                                .small_button(t(Key::Username))
+                                .on_hover_text(t(Key::Copy))
+                                .clicked()
+                            {
+                                if let Some((user, _)) = self
+                                    .raw
+                                    .as_ref()
+                                    .and_then(|r| vault::login_pair(r, id))
                                 {
-                                    if let Some((_, pass)) = self
-                                        .raw
-                                        .as_ref()
-                                        .and_then(|r| vault::login_pair(r, id))
+                                    // usuário não é segredo: cópia simples
+                                    if arboard::Clipboard::new()
+                                        .and_then(|mut c| c.set_text(user.clone()))
+                                        .is_ok()
                                     {
-                                        if clipboard::copy_secret(pass).is_ok() {
-                                            self.copied(name);
-                                        }
+                                        self.copied(name);
                                     }
                                 }
-                                if ui
-                                    .small_button(t(Key::Username))
-                                    .on_hover_text(t(Key::Copy))
-                                    .clicked()
-                                {
-                                    if let Some((user, _)) = self
-                                        .raw
-                                        .as_ref()
-                                        .and_then(|r| vault::login_pair(r, id))
-                                    {
-                                        // usuário não é segredo: cópia simples
-                                        if arboard::Clipboard::new()
-                                            .and_then(|mut c| c.set_text(user.clone()))
-                                            .is_ok()
-                                        {
-                                            self.copied(name);
-                                        }
-                                    }
+                            }
+                        }
+                        if ui
+                            .small_button(t(Key::Password))
+                            .on_hover_text(t(Key::Copy))
+                            .clicked()
+                        {
+                            if let Some((_, pass)) = self
+                                .raw
+                                .as_ref()
+                                .and_then(|r| vault::login_pair(r, id))
+                            {
+                                if clipboard::copy_secret(pass).is_ok() {
+                                    self.copied(name);
                                 }
-                            },
-                        );
+                            }
+                        }
                     });
                     ui.separator();
                 }
