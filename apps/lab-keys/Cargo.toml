@@ -16,12 +16,14 @@ chacha20poly1305.workspace = true
 rand.workspace = true
 zeroize.workspace = true
 totp-rs.workspace = true
-# Desbloqueio rápido: chave derivada no cofre do SO (mesmo desenho do oficial)
-keyring.workspace = true
-base64.workspace = true
 arboard.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+# Desbloqueio rápido (chave no Credential Manager) — só no Windows: o
+# secret-service do Linux puxaria libdbus pro build/AppImage (runner nem tem
+# dbus-1 dev). Mesma política do tray/rfd: AppImage enxuto.
+keyring.workspace = true
+base64.workspace = true
 # Flag ExcludeClipboardContentFromMonitorProcessing ao copiar senha
 clipboard-win = "5.4"
 rfd.workspace = true

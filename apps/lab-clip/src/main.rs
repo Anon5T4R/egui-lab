@@ -142,8 +142,8 @@ impl ClipApp {
         };
         let rgba = dec.to_rgba8();
         let data = arboard::ImageData {
-            width: rgba.width(),
-            height: rgba.height(),
+            width: rgba.width() as usize,
+            height: rgba.height() as usize,
             bytes: std::borrow::Cow::Owned(rgba.into_raw()),
         };
         if let Ok(mut c) = arboard::Clipboard::new() {

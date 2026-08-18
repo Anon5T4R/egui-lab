@@ -15,7 +15,6 @@ mod crypto;
 mod totp;
 mod vault;
 
-use base64::Engine;
 use eframe::egui;
 use lab_ui::config::{self, Config};
 use lab_ui::i18n::{self, Key};
@@ -163,7 +162,10 @@ impl KeysApp {
     }
 
     // ── desbloqueio rápido (keyring do SO — desenho do oficial) ────────
+    // Só no Windows: secret-service no Linux puxaria libdbus pro build
+    // (runner/AppImage sem dbus-1). Fora do Windows os stubs desligam tudo.
 
+    #[cfg(windows)]
     fn path_has_stored_key(&self) -> bool {
         let path = self.path.trim();
         !path.is_empty()
@@ -172,10 +174,18 @@ impl KeysApp {
                 .is_ok()
     }
 
+    #[cfg(not(windows))]
+    fn path_has_stored_key(&self) -> bool {
+        false
+    }
+
     /// Tenta abrir o último cofre com a chave guardada no cofre do SO, sem
     /// pedir a master. Falha silenciosa (chave inválida → apaga a entrada:
     /// senha mudou em outro lugar, a chave velha não serve mais).
+    #[cfg(windows)]
     fn try_quick_unlock(&mut self) {
+        use base64::Engine as _;
+
         let Some(path) = last_path() else {
             return;
         };
@@ -215,19 +225,27 @@ impl KeysApp {
         self.quick_ativa = self.path_has_stored_key();
     }
 
+    #[cfg(not(windows))]
+    fn try_quick_unlock(&mut self) {}
+
+    #[cfg(windows)]
     fn store_quick_key(&self, session: &crypto::SessionKey) {
+        use base64::Engine as _;
+
         let path = self.path.trim();
         if path.is_empty() {
             return;
         }
         let b64 = base64::engine::general_purpose::STANDARD.encode(session.key_bytes());
         if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, path) {
-            if entry.set_password(&b64).is_ok() {
-                // Sucesso — a chave só fica no cofre do SE, nunca em arquivo.
-            }
+            let _ = entry.set_password(&b64);
         }
     }
 
+    #[cfg(not(windows))]
+    fn store_quick_key(&self, _session: &crypto::SessionKey) {}
+
+    #[cfg(windows)]
     fn forget_quick_key(&mut self) {
         let path = self.path.trim();
         if !path.is_empty() {
@@ -235,6 +253,12 @@ impl KeysApp {
                 let _ = entry.delete_credential();
             }
         }
+        self.quick_unlock = false;
+        self.quick_ativa = false;
+    }
+
+    #[cfg(not(windows))]
+    fn forget_quick_key(&mut self) {
         self.quick_unlock = false;
         self.quick_ativa = false;
     }
@@ -550,7 +574,10 @@ impl KeysApp {
             });
 
         ui.add_space(4.0);
+        #[cfg(windows)]
         ui.checkbox(&mut self.quick_unlock, t(Key::QuickUnlock));
+        #[cfg(not(windows))]
+        let _ = &self.quick_unlock; // campo existe, UI não (stub desligado)
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             if ui
@@ -563,9 +590,13 @@ impl KeysApp {
             {
                 self.unlock();
             }
+            #[cfg(windows)]
             if self.quick_ativa
                 && ui
-                    .add_enabled(!self.path.trim().is_empty(), egui::Button::new(t(Key::ForgetKey)).small())
+                    .add_enabled(
+                        !self.path.trim().is_empty(),
+                        egui::Button::new(t(Key::ForgetKey)).small(),
+                    )
                     .clicked()
             {
                 self.forget_quick_key();
@@ -813,6 +844,7 @@ impl KeysApp {
                         .weak(),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    #[cfg(windows)]
                     if self.quick_ativa && ui.button(t(Key::ForgetKey)).small().clicked() {
                         self.forget_quick_key();
                     }

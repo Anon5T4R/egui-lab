@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
-use history::{ClipItem, ImageItem, Payload};
+use crate::history::{ClipItem, ImageItem, Payload};
 
 /// O copy disparado por NÓS (re-copiar item) não deve voltar pro histórico.
 pub static SKIP_NEXT: AtomicBool = AtomicBool::new(false);
@@ -103,7 +103,8 @@ pub fn spawn() -> Receiver<ClipItem> {
                         }
                     }
                     if let Ok(img) = clip.get_image() {
-                        let (w, hgt) = (img.width, img.height);
+                        // arboard fala em usize; o histórico guarda u32.
+                        let (w, hgt) = (img.width as u32, img.height as u32);
                         if w > 0 && hgt > 0 && (w as u64 * hgt as u64) <= 16_000_000 {
                             let h = hash_of("rgba", &img.bytes);
                             if h != last_img {

@@ -11,13 +11,13 @@ pub const MAX_TEXT_ITEMS: usize = 500;
 /// Imagem: teto próprio bem menor — PNG de screenshot pesa MBs.
 pub const MAX_IMAGE_ITEMS: usize = 20;
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum Payload {
     Text(String),
     Image(ImageItem),
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct ImageItem {
     pub png: Vec<u8>,
     pub w: u32,
