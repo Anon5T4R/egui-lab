@@ -1,0 +1,103 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # CRT estático via .cargo/config.toml: .exe roda em qualquer Windows,
+      # sem depender do VC++ redistributable (o NSIS do Tauri resolve isso
+      # lá; aqui o zip tem que bastar).
+      - run: cargo build --release --workspace
+      - name: empacotar zips
+        shell: pwsh
+        run: |
+          $apps = "lab-monitor","lab-calc","lab-clip","lab-keys"
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          foreach ($a in $apps) {
+            Compress-Archive -Path "target/release/$a.exe" -DestinationPath "out/$a-windows-x64.zip"
+          }
+          Get-ChildItem out | Select-Object Name, Length
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: out/
+          if-no-files-found: error
+
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --workspace
+      - name: appimages (linuxdeploy)
+        run: |
+          set -euo pipefail
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+          mkdir -p out
+          declare -A NAMES=( [lab-monitor]="Lab Monitor" [lab-calc]="Lab Calc" [lab-clip]="Lab Clip" [lab-keys]="Lab Keys" )
+          for a in lab-monitor lab-calc lab-clip lab-keys; do
+            appdir="AppDir-$a"
+            mkdir -p "$appdir/usr/bin"
+            cp "target/release/$a" "$appdir/usr/bin/"
+            cp "icons/$a.png" "$appdir/$a.png"
+            cat > "$appdir/$a.desktop" <<EOF
+          [Desktop Entry]
+          Type=Application
+          Name=${NAMES[$a]}
+          Exec=$a
+          Icon=$a
+          Categories=Utility;
+          Comment=Piloto egui da suite Local (avaliacao)
+          Terminal=false
+          StartupWMClass=$a
+          EOF
+            ./linuxdeploy-x86_64.AppImage --appdir "$appdir" \
+              --desktop-file "$appdir/$a.desktop" \
+              --icon-file "$appdir/$a.png" --output appimage
+            mv "${a}-x86_64.AppImage" "out/"
+          done
+          ls -la out
+      # Mesmo reempacotamento da suíte: tira as libs que falam com o
+      # driver/compositor do HOST (Wayland/GL) e troca o runtime pro
+      # type2-runtime (fuse3) — sem isso: tela branca/briga de Mesa fora
+      # do Ubuntu do runner e "requires FUSE" em Arch/Fedora.
+      - uses: Anon5T4R/linux-packaging/fix-appimage@v1
+        with:
+          path: out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: out/
+          if-no-files-found: error
+
+  publish:
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: criar release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "egui-lab ${GITHUB_REF_NAME}" \
+            --notes "Pilotos egui/eframe da avaliação da suíte: Monitor (gráficos+processos), Calc (expressões), Clip (tray+atalho global+poller), Keys (cofre .tkeys REAL do LocalKeys). Avaliação — não substitui os apps oficiais. Windows: .zip com .exe estático (sem dependência de VC++). Linux: AppImage (libs de GPU do host)." \
+            dist/windows/* dist/linux/*

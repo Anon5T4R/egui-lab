@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/lab-ui", "apps/lab-monitor", "apps/lab-calc"]
+members = ["crates/*", "apps/*"]
 
 [workspace.package]
 version = "0.1.0"
@@ -13,3 +13,20 @@ egui = "0.31"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sysinfo = "0.33"
+# Integração OS (lab-clip) — mesmos crates que o Tauri usa por baixo
+arboard = "3.6"
+tray-icon = "0.24"
+global-hotkey = "0.8"
+# Cripto do lab-keys — MESMOS pins do LocalKeys (crypto.rs copiado verbatim)
+rand = "0.8"
+zeroize = "1"
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+# Diálogo de arquivo nativo (só Windows; no Linux o caminho é digitado,
+# de propósito — gtk3 no AppImage engordaria dezenas de MB)
+rfd = { version = "0.17", default-features = false }
+
+[profile.release]
+lto = "thin"
+strip = true
+

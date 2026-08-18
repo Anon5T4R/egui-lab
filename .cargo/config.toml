@@ -1,0 +1,5 @@
+# CRT estático no Windows: o .exe do zip roda em qualquer máquina, sem
+# depender do VC++ redistributable (na suíte Tauri o NSIS cuida disso; no
+# lab o zip tem que bastar). Não afeta Linux.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

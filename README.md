@@ -51,14 +51,40 @@ leitura: o terreno onde o webview ganha com folga.
 
 ## Ondas
 
-1. **Onda 1 (esta):** `lab-ui` (tema/i18n/config — esqueleto do "padrão egui")
+1. **Onda 1 (feita):** `lab-ui` (tema/i18n/config — esqueleto do "padrão egui")
    + `lab-monitor` (CPU/memória/núcleos ao vivo) + `lab-calc` (expressões,
    preview ao vivo, histórico).
-2. **Onda 2:** `lab-clip` (tray + hotkey global + poller de clipboard — aqui
-   começa a cópia real de módulos Rust do LocalClip) e tabela de processos no
-   `lab-monitor`.
-3. **Onda 3:** `lab-keys` (cofre `.tkeys` real, só UI nova) ou
-   `lab-converter` (fila + progresso).
+2. **Onda 2 (feita):** `lab-clip` — bandeja (`tray-icon`), atalho global
+   **Ctrl+Alt+V** (`global-hotkey`; o oficial é Ctrl+Shift+V e dois apps não
+   registram o mesmo atalho — o LocalClip instalado é dono), poller de texto
+   (`arboard`, 800 ms, dedup) com a flag
+   `ExcludeClipboardContentFromMonitorProcessing` copiada do oficial (senha
+   copiada do LocalKeys NÃO entra no histórico). Só texto, histórico em
+   memória (sem SQLite — escopo). Tabela de processos no `lab-monitor`
+   (filtro/ordenação/encerrar com confirmação).
+3. **Onda 3 (feita):** `lab-keys` — abre/cria um cofre `.tkeys` **REAL**:
+   `crypto.rs` (XChaCha20-Poly1305 + Argon2id), a gravação atômica e o
+   `copy_secret` (formatos de exclusão do Windows + limpeza em 30 s) são
+   copiados verbatim do LocalKeys@0.9.0. Escopo: destrancar, listar, buscar,
+   copiar senha/usuário, acrescentar login (escrita conservadora — só
+   acrescenta; pastas/anexos/campos custom atravessam intactos), trancar
+   (botão ou ao minimizar, regra do oficial).
+
+## Releases
+
+Tag `vX.Y.Z` → `release.yml` publica na GitHub Release:
+
+- **Windows:** `lab-<app>-windows-x64.zip` — `.exe` com **CRT estático**
+  (`.cargo/config.toml`): roda em qualquer Windows, sem VC++ redistributable.
+- **Linux:** `lab-<app>-x86_64.AppImage` — linuxdeploy + o reempacotamento da
+  suíte (`Anon5T4R/linux-packaging/fix-appimage@v1`: libs de GPU/Wayland do
+  host, type2-runtime/fuse3).
+
+Gotchas conhecidos do lab: `lab-keys` roda o Argon2 na thread da UI (~300 ms
+de freeze no destrancar — o oficial usa command async); `lab-clip` encerra no
+X (o "fechar pra bandeja" do oficial é opt-in e não configuramos); diálogos de
+arquivo nativos só no Windows (rfd win32) — no Linux o caminho do `.tkeys` é
+digitado, de propósito (gtk3 no AppImage engordaria dezenas de MB à toa).
 
 ## Critérios de decisão (go/no-go)
 
@@ -74,6 +100,8 @@ leitura: o terreno onde o webview ganha com folga.
 ```
 cargo run -p lab-monitor
 cargo run -p lab-calc
+cargo run -p lab-clip
+cargo run -p lab-keys
 ```
 
 Testes: `cargo test --workspace` (o CI roda).
