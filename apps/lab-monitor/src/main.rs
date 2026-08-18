@@ -1,8 +1,8 @@
 //! lab-monitor — piloto de referência do LocalMonitor em egui/eframe.
-//! Escopo da onda 1: CPU total + por núcleo e memória, ao vivo, com gráficos
-//! pintados à mão (Painter) — sem egui_plot, sem tabela de processos (onda 2).
-//! O objetivo é medir o custo/benefício do immediate mode pra dado em tempo
-//! real, não paridade com o app oficial.
+//! Onda 1: CPU total/por núcleo e memória ao vivo, gráficos pintados à mão.
+//! Onda 2 (este): tabela de processos — filtro, ordenação por coluna e
+//! encerrar com confirmação (o paridade do "Gerenciador de Tarefas" do app
+//! oficial). Mede o custo do immediate mode pra dado em tempo real.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -13,17 +13,21 @@ use eframe::egui;
 use lab_ui::config::{self, Config};
 use lab_ui::i18n::{self, Key};
 use lab_ui::theme::{self, Palette};
+use sysinfo::{Pid, ProcessesToUpdate};
 
 const APP_ID: &str = "lab-monitor";
 const MAX_SAMPLES: usize = 160;
 const REFRESH: Duration = Duration::from_millis(500);
+/// Processos mostrados (pós filtro+ordenação) — centenas de linhas de Grid
+/// por frame é o teste de estresse que interessa.
+const MAX_ROWS: usize = 200;
 
 fn main() -> eframe::Result<()> {
     let cfg = config::load(APP_ID);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Lab Monitor")
-            .with_inner_size([430.0, 600.0]),
+            .with_inner_size([460.0, 720.0]),
         ..Default::default()
     };
     eframe::run_native(
@@ -36,6 +40,14 @@ fn main() -> eframe::Result<()> {
     )
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SortCol {
+    Name,
+    Pid,
+    Cpu,
+    Mem,
+}
+
 struct MonitorApp {
     cfg: Config,
     sys: sysinfo::System,
@@ -43,6 +55,12 @@ struct MonitorApp {
     mem_hist: VecDeque<f32>,
     cores: Vec<f32>,
     last_refresh: Instant,
+    // processos
+    filter: String,
+    sort: SortCol,
+    sort_desc: bool,
+    /// (pid, nome) do processo esperando confirmação de encerramento.
+    kill_ask: Option<(Pid, String)>,
 }
 
 impl MonitorApp {
@@ -54,6 +72,10 @@ impl MonitorApp {
             mem_hist: VecDeque::new(),
             cores: Vec::new(),
             last_refresh: Instant::now(),
+            filter: String::new(),
+            sort: SortCol::Cpu,
+            sort_desc: true,
+            kill_ask: None,
         };
         app.refresh();
         app
@@ -62,6 +84,7 @@ impl MonitorApp {
     fn refresh(&mut self) {
         self.sys.refresh_cpu_all();
         self.sys.refresh_memory();
+        self.sys.refresh_processes(ProcessesToUpdate::All, true);
 
         let cores: Vec<f32> = self.sys.cpus().iter().map(|c| c.cpu_usage()).collect();
         let cpu = if cores.is_empty() {
@@ -80,6 +103,61 @@ impl MonitorApp {
         push_sample(&mut self.cpu_hist, cpu);
         push_sample(&mut self.mem_hist, mem);
     }
+
+    /// Linha da tabela: dados mínimos clonados do processo (evita segurar o
+    /// borrow de `self.sys` enquanto o Grid renderiza).
+    fn rows(&self) -> Vec<Row> {
+        let needle = self.filter.trim().to_lowercase();
+        let mut rows: Vec<Row> = self
+            .sys
+            .processes()
+            .iter()
+            .filter(|(_, p)| {
+                // A lixeira não: processo morto listado até o próximo refresh.
+                if needle.is_empty() {
+                    return true;
+                }
+                p.name().to_string_lossy().to_lowercase().contains(&needle)
+                    || p.pid().as_u32().to_string().contains(&needle)
+            })
+            .map(|(pid, p)| Row {
+                pid: *pid,
+                name: p.name().to_string_lossy().into_owned(),
+                cpu: p.cpu_usage(),
+                mem_kb: p.memory() / 1024,
+            })
+            .collect();
+
+        let desc = self.sort_desc;
+        match self.sort {
+            SortCol::Name => rows.sort_by(|a, b| a.name.cmp(&b.name)),
+            SortCol::Pid => rows.sort_by(|a, b| a.pid.cmp(&b.pid)),
+            SortCol::Cpu => rows.sort_by(|a, b| a.cpu.total_cmp(&b.cpu)),
+            SortCol::Mem => rows.sort_by(|a, b| a.mem_kb.cmp(&b.mem_kb)),
+        }
+        if desc {
+            rows.reverse(); // nome em ordem Z-A quando desc, como no app oficial
+        }
+        rows.truncate(MAX_ROWS);
+        rows
+    }
+
+    fn toggle_sort(&mut self, col: SortCol) {
+        if self.sort == col {
+            self.sort_desc = !self.sort_desc;
+        } else {
+            self.sort = col;
+            // Padrão sensato: nome sobe, números descem.
+            self.sort_desc = col != SortCol::Name;
+        }
+    }
+}
+
+struct Row {
+    pid: Pid,
+    name: String,
+    cpu: f32,
+    mem_kb: u64,
 }
 
 fn push_sample(hist: &mut VecDeque<f32>, v: f32) {
@@ -114,8 +192,10 @@ impl eframe::App for MonitorApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             let pal = self.cfg.theme.palette();
-            let t = |k: Key| i18n::t(self.cfg.lang, k);
+            let lang = self.cfg.lang;
+            let t = |k: Key| i18n::t(lang, k);
 
+            // ── visão geral ─────────────────────────────────────────────
             let cpu_now = self.cpu_hist.back().copied().unwrap_or(0.0);
             chart(
                 ui,
@@ -160,11 +240,120 @@ impl eframe::App for MonitorApp {
                     resp.on_hover_text(format!("{i}: {usage:.0}%"));
                 }
             });
+
+            ui.add_space(16.0);
+            ui.separator();
+
+            // ── processos ───────────────────────────────────────────────
+            ui.horizontal(|ui| {
+                ui.strong(t(Key::Processes));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add_enabled(!self.filter.is_empty(), egui::Button::new("✕").small())
+                        .on_hover_text(t(Key::Clear))
+                        .clicked()
+                    {
+                        self.filter.clear();
+                    }
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.filter)
+                            .hint_text(t(Key::Search))
+                            .desired_width(160.0),
+                    );
+                });
+            });
+
+            ui.add_space(4.0);
+
+            let rows = self.rows();
+            egui::ScrollArea::vertical().show_rows(
+                ui,
+                ui.text_style_height(&egui::TextStyle::Body),
+                rows.len(),
+                |ui| {
+                    egui::Grid::new("procs")
+                        .num_columns(5)
+                        .spacing([10.0, 4.0])
+                        .striped(true)
+                        .show(ui, |ui| {
+                            // cabeçalho clicável (ordenação)
+                            let head = |ui: &mut egui::Ui,
+                                        col: SortCol,
+                                        label: &str,
+                                        app: &mut MonitorApp| {
+                                let mark = if app.sort == col {
+                                    if app.sort_desc { " ▾" } else { " ▴" }
+                                } else {
+                                    ""
+                                };
+                                if ui
+                                    .selectable_label(app.sort == col, format!("{label}{mark}"))
+                                    .clicked()
+                                {
+                                    app.toggle_sort(col);
+                                }
+                            };
+                            head(ui, SortCol::Name, t(Key::Name), self);
+                            head(ui, SortCol::Pid, "PID", self);
+                            head(ui, SortCol::Cpu, "CPU", self);
+                            head(ui, SortCol::Mem, "MB", self);
+                            ui.label("");
+                            ui.end_row();
+
+                            for r in &rows {
+                                ui.label(&r.name);
+                                ui.label(r.pid.to_string());
+                                ui.label(format!("{:.1}%", r.cpu));
+                                ui.label(format!("{:.0}", r.mem_kb as f64 / 1024.0));
+                                // Encerrar abre confirmação — mesma regra do
+                                // app oficial (trabalho não salvo se perde).
+                                if ui
+                                    .add(egui::Button::new(t(Key::End)).small())
+                                    .on_hover_text(format!("{}: {}", r.pid, r.name))
+                                    .clicked()
+                                {
+                                    self.kill_ask = Some((r.pid, r.name.clone()));
+                                }
+                                ui.end_row();
+                            }
+                        });
+                },
+            );
         });
+
+        // ── diálogo de confirmação de encerramento ─────────────────────
+        if let Some((pid, name)) = self.kill_ask.clone() {
+            let lang = self.cfg.lang;
+            let t = |k: Key| i18n::t(lang, k);
+            egui::Window::new(t(Key::KillTitle))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label(format!("{} — {}", name, pid));
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new(t(Key::KillAsk)).weak());
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(t(Key::Confirm)).clicked() {
+                            // `let _`: compatível com bool (sysinfo ≤0.34) e
+                            // Result (0.35+) — o refresh seguinte mostra o
+                            // resultado de verdade.
+                            if let Some(p) = self.sys.process_mut(pid) {
+                                let _ = p.kill();
+                            }
+                            self.kill_ask = None;
+                        }
+                        if ui.button(t(Key::Cancel)).clicked() {
+                            self.kill_ask = None;
+                        }
+                    });
+                });
+        }
     }
 }
 
-/// Sparkline pintada à mão — a versão egui do "sparklines próprias em SVG"
+/// Sparkline pintada à mão — a versão egui das "sparklines próprias em SVG"
 /// do LocalMonitor oficial.
 fn chart(ui: &mut egui::Ui, hist: &VecDeque<f32>, pal: &Palette, caption: String) {
     let (rect, _) = ui.allocate_exact_size(
