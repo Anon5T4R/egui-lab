@@ -105,7 +105,7 @@ pub fn icon_path(id: &str) -> PathBuf {
 
 // ── registro do instalado ─────────────────────────────────────────────
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Clone, Default)]
 pub struct InstalledApp {
     /// Tag da release instalada (ex.: "v0.2.2").
     pub version: String,

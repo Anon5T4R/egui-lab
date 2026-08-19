@@ -15,14 +15,16 @@ pub enum Where {
 #[cfg(windows)]
 mod win {
     use super::Where;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use windows::core::{GUID, Interface, PCWSTR};
     use windows::Win32::Foundation::BOOL;
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_INPROC_SERVER,
-        COINIT_APARTMENTTHREADED, IPersistFile, SHGetKnownFolderPath, KNOWN_FOLDER_FLAG,
+        COINIT_APARTMENTTHREADED, IPersistFile,
     };
-    use windows::Win32::UI::Shell::{FOLDERID_Desktop, FOLDERID_Programs, IShellLinkW};
+    use windows::Win32::UI::Shell::{
+        FOLDERID_Desktop, FOLDERID_Programs, IShellLinkW, KNOWN_FOLDER_FLAG, SHGetKnownFolderPath,
+    };
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
     /// O windows-rs 0.58 não exporta `CLSID_ShellLink` — valor documentado
