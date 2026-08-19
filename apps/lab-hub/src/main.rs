@@ -128,6 +128,8 @@ impl eframe::App for HubApp {
         // Drena as mensagens das threads (se houver alguma em voo).
         let mut latest_req = false;
         let mut install_req: Option<&'static AppDef> = None;
+        // self.rx é emprestado no drain — desligá-lo é postergado pra fora.
+        let mut drop_rx = false;
         if let Some(rx) = &self.rx {
             while let Ok(msg) = rx.try_recv() {
                 match msg {
@@ -140,12 +142,12 @@ impl eframe::App for HubApp {
                     Msg::Done(Ok(id)) => {
                         self.installed = install::load_installed();
                         self.busy = None;
-                        self.rx = None;
+                        drop_rx = true;
                         self.status = format!("{id} ✓");
                     }
                     Msg::Done(Err(e)) => {
                         self.busy = None;
-                        self.rx = None;
+                        drop_rx = true;
                         self.status = format!("⚠ {e}");
                     }
                 }
@@ -153,13 +155,13 @@ impl eframe::App for HubApp {
             // Canal só de latest: fecha sozinho quando a thread morre
             // (matches! em vez de ==: TryRecvError não é PartialEq).
             if self.busy.is_none()
-                && matches!(
-                    self.rx.as_ref().map(|r| r.try_recv()),
-                    Some(Err(std::sync::mpsc::TryRecvError::Disconnected))
-                )
+                && matches!(rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Disconnected))
             {
-                self.rx = None;
+                drop_rx = true;
             }
+        }
+        if drop_rx {
+            self.rx = None;
         }
         if self.rx.is_some() || self.busy.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
