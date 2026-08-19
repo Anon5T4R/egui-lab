@@ -1,0 +1,19 @@
+[package]
+name = "lab-hub"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+eframe.workspace = true
+egui.workspace = true
+lab-ui = { path = "../../crates/lab-ui" }
+serde.workspace = true
+serde_json.workspace = true
+image.workspace = true
+ureq.workspace = true
+zip.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# .lnk via COM (IShellLinkW/IPersistFile/SHGetKnownFolderPath)
+windows = { version = "0.58", features = ["Win32_UI_Shell", "Win32_System_Com"] }

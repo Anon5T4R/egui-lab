@@ -75,6 +75,18 @@ pub enum Key {
     ForgetKey,
     Edit,
     SecondsShort,
+    // lab-hub
+    Install,
+    Update,
+    Open,
+    StartMenu,
+    Desktop,
+    Installed,
+    Available,
+    Downloading,
+    Refresh,
+    UpToDate,
+    NotInstalled,
 }
 
 /// Todas as chaves — usado pelo teste de completude (fora de teste o match
@@ -127,6 +139,17 @@ const KEYS: &[Key] = &[
     Key::ForgetKey,
     Key::Edit,
     Key::SecondsShort,
+    Key::Install,
+    Key::Update,
+    Key::Open,
+    Key::StartMenu,
+    Key::Desktop,
+    Key::Installed,
+    Key::Available,
+    Key::Downloading,
+    Key::Refresh,
+    Key::UpToDate,
+    Key::NotInstalled,
 ];
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -344,6 +367,61 @@ pub fn t(lang: Lang, key: Key) -> &'static str {
             Lang::Es => "Editar",
         },
         Key::SecondsShort => "s",
+        Key::Install => match lang {
+            Lang::Pt => "Instalar",
+            Lang::En => "Install",
+            Lang::Es => "Instalar",
+        },
+        Key::Update => match lang {
+            Lang::Pt => "Atualizar",
+            Lang::En => "Update",
+            Lang::Es => "Actualizar",
+        },
+        Key::Open => match lang {
+            Lang::Pt => "Abrir",
+            Lang::En => "Open",
+            Lang::Es => "Abrir",
+        },
+        Key::StartMenu => match lang {
+            Lang::Pt => "Menu Iniciar",
+            Lang::En => "Start menu",
+            Lang::Es => "Menú Inicio",
+        },
+        Key::Desktop => match lang {
+            Lang::Pt => "Área de trabalho",
+            Lang::En => "Desktop",
+            Lang::Es => "Escritorio",
+        },
+        Key::Installed => match lang {
+            Lang::Pt => "instalado",
+            Lang::En => "installed",
+            Lang::Es => "instalado",
+        },
+        Key::Available => match lang {
+            Lang::Pt => "disponível",
+            Lang::En => "available",
+            Lang::Es => "disponible",
+        },
+        Key::Downloading => match lang {
+            Lang::Pt => "baixando",
+            Lang::En => "downloading",
+            Lang::Es => "descargando",
+        },
+        Key::Refresh => match lang {
+            Lang::Pt => "Atualizar lista",
+            Lang::En => "Refresh",
+            Lang::Es => "Actualizar lista",
+        },
+        Key::UpToDate => match lang {
+            Lang::Pt => "em dia",
+            Lang::En => "up to date",
+            Lang::Es => "al día",
+        },
+        Key::NotInstalled => match lang {
+            Lang::Pt => "não instalado",
+            Lang::En => "not installed",
+            Lang::Es => "no instalado",
+        },
     }
 }
 

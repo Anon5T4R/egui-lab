@@ -86,6 +86,16 @@ leitura: o terreno onde o webview ganha com folga.
      keyring, opt-in com "esquecer chave" — só no Windows), **editar** item
      e **excluir** (lixeira lógica `deletedAt`, cofre continua válido no
      LocalKeys oficial).
+5. **Onda 5 (feita): `lab-hub`** — o "TaylorHub do lab". Catálogo fixo dos 4
+   pilotos; consulta `releases/latest` do monorepo (uma tag serve pra todos),
+   baixa o asset da plataforma (zip Windows/AppImage Linux) com barra de
+   progresso, instala em **`%LOCALAPPDATA%\LabSuite\<app>\`** (Linux:
+   `~/.local/share/LabSuite`), registra versões em `installed.json` e cria
+   **atalhos com os ícones REAIS** — `.lnk` via COM (`IShellLinkW`) apontando
+   pro `.ico` baixado dos irmãos Tauri; `.desktop` no Linux. "Abrir" lança o
+   app instalado. HTTP via `ureq` (sync+rustls, zero tokio/openssl).
+   **O repo é público por causa disso** — download anônimo de release asset
+   não existe em repo privado (mesmo modelo do TaylorHub).
 
 ## Releases
 
@@ -121,6 +131,10 @@ cargo run -p lab-monitor
 cargo run -p lab-calc
 cargo run -p lab-clip
 cargo run -p lab-keys
+cargo run -p lab-hub
 ```
+
+Fluxo do hub: baixe o `lab-hub` UMA vez da release → ele instala/atualiza os
+outros quatro (e a si mesmo tem card "⬇" que abre a página de releases).
 
 Testes: `cargo test --workspace` (o CI roda).
