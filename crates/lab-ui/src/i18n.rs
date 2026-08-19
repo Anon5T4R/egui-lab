@@ -95,6 +95,13 @@ pub enum Key {
     // lab-hub: card do próprio hub
     Running,
     Restart,
+    // lab-clip: preferências (atalho/autostart/bandeja)
+    Settings,
+    Hotkey,
+    Define,
+    Autostart,
+    PressKeys,
+    CloseToTray,
 }
 
 /// Todas as chaves — usado pelo teste de completude (fora de teste o match
@@ -164,6 +171,12 @@ const KEYS: &[Key] = &[
     Key::UninstallAsk,
     Key::Running,
     Key::Restart,
+    Key::Settings,
+    Key::Hotkey,
+    Key::Define,
+    Key::Autostart,
+    Key::PressKeys,
+    Key::CloseToTray,
 ];
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -465,6 +478,36 @@ pub fn t(lang: Lang, key: Key) -> &'static str {
             Lang::Pt => "reinicie o Lab Hub",
             Lang::En => "restart Lab Hub",
             Lang::Es => "reinicie Lab Hub",
+        },
+        Key::Settings => match lang {
+            Lang::Pt => "Configurações",
+            Lang::En => "Settings",
+            Lang::Es => "Ajustes",
+        },
+        Key::Hotkey => match lang {
+            Lang::Pt => "Atalho global",
+            Lang::En => "Global hotkey",
+            Lang::Es => "Atajo global",
+        },
+        Key::Define => match lang {
+            Lang::Pt => "Definir…",
+            Lang::En => "Set…",
+            Lang::Es => "Definir…",
+        },
+        Key::Autostart => match lang {
+            Lang::Pt => "Iniciar com o sistema",
+            Lang::En => "Start with system",
+            Lang::Es => "Iniciar con el sistema",
+        },
+        Key::PressKeys => match lang {
+            Lang::Pt => "pressione as teclas…",
+            Lang::En => "press the keys…",
+            Lang::Es => "pulsa las teclas…",
+        },
+        Key::CloseToTray => match lang {
+            Lang::Pt => "Fechar minimiza pra bandeja.",
+            Lang::En => "Closing minimizes to tray.",
+            Lang::Es => "Cerrar minimiza a la bandeja.",
         },
     }
 }

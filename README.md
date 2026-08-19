@@ -104,6 +104,12 @@ leitura: o terreno onde o webview ganha com folga.
    rodando" + versão disponível, **atalhos pra si mesmo** e **auto-update**
    (renomeia o exe em execução pra `.old`, copia o novo no lugar, pede
    reinício; `.old` é limpo no boot seguinte).
+8. **Onda 8 (feita):** `lab-clip` vira app de bandeja de verdade —
+   **fechar minimiza pra bandeja** (X → CancelClose + esconder, só no
+   Windows onde há bandeja), **atalho global configurável** (⚙ → "Definir…",
+   captura teclas + modificadores, persiste em `prefs.json`) e **iniciar com
+   o sistema** (checkbox; registro `Run` no Windows / `.desktop` no Linux,
+   arranca com `--hidden` direto na bandeja).
 
 ## Releases
 
@@ -116,12 +122,12 @@ Tag `vX.Y.Z` → `release.yml` publica na GitHub Release:
   host, type2-runtime/fuse3).
 
 Gotchas conhecidos do lab: `lab-keys` roda o Argon2 na thread da UI (~300 ms
-de freeze no destrancar — o oficial usa command async); `lab-clip` encerra no
-X (o "fechar pra bandeja" do oficial é opt-in e não configuramos); diálogos de
-arquivo nativos, **bandeja e desbloqueio rápido só no Windows** — no Linux o
-`tray-icon` puxaria muda/gtk3 e o keyring puxaria libdbus (o runner nem tem
-dbus-1 dev), então lá o lab-clip vive de atalho global (X11) + janela e o
-lab-keys pede a master sempre (mesma política do rfd: AppImage enxuto).
+de freeze no destrancar — o oficial usa command async); diálogos de
+arquivo nativos, **bandeja, fechar-pra-bandeja e desbloqueio rápido só no
+Windows** — no Linux o `tray-icon` puxaria muda/gtk3 e o keyring puxaria
+libdbus (o runner nem tem dbus-1 dev), então lá o lab-clip vive de atalho
+global (X11) + janela (o X fecha de verdade) e o lab-keys pede a master
+sempre (mesma política do rfd: AppImage enxuto).
 
 ## Critérios de decisão (go/no-go)
 

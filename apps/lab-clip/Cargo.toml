@@ -8,6 +8,8 @@ license.workspace = true
 eframe.workspace = true
 egui.workspace = true
 lab-ui = { path = "../../crates/lab-ui" }
+serde.workspace = true
+serde_json.workspace = true
 arboard.workspace = true
 image.workspace = true
 global-hotkey.workspace = true
@@ -19,3 +21,5 @@ global-hotkey.workspace = true
 tray-icon.workspace = true
 # Leitura da flag ExcludeClipboardContentFromMonitorProcessing (privacidade)
 clipboard-win = "5.4"
+# Autostart no registro (Run) — mesmo desenho do LocalClip oficial
+winreg = "0.55"

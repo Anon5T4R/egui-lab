@@ -13,17 +13,18 @@
 
 mod history;
 mod poller;
+mod prefs;
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::Receiver;
 
 use eframe::egui;
-use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use lab_ui::config::{self, Config};
 use lab_ui::i18n::{self, Key};
 use lab_ui::theme;
+use prefs::HotkeyPref;
 
 #[cfg(windows)]
 use tray_icon::menu::{Menu, MenuItem, MenuEvent};
@@ -35,6 +36,7 @@ use history::{ClipItem, ImageItem, Payload};
 const APP_ID: &str = "lab-clip";
 
 fn main() -> eframe::Result<()> {
+    let hidden = std::env::args().any(|a| a == "--hidden");
     let cfg = config::load(APP_ID);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -47,7 +49,7 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(move |cc| {
             theme::apply(&cc.egui_ctx, cfg.theme);
-            Ok(Box::new(ClipApp::new(cfg)))
+            Ok(Box::new(ClipApp::new(cfg, hidden)))
         }),
     )
 }
@@ -64,13 +66,19 @@ struct ClipApp {
     /// Viva enquanto o app viver: derruba a bandeja e o atalho no drop.
     #[cfg(windows)]
     _tray: TrayIcon,
-    _hotkeys: GlobalHotKeyManager,
+    hotkeys: GlobalHotKeyManager,
+    hotkey: HotkeyPref,
     visible: bool,
     focus_search: bool,
+    settings_open: bool,
+    recording: bool,
+    autostart: bool,
+    hidden_start: bool,
+    status: String,
 }
 
 impl ClipApp {
-    fn new(cfg: Config) -> Self {
+    fn new(cfg: Config, hidden: bool) -> Self {
         let rx = poller::spawn();
 
         // Bandeja: menu mínimo + toggle no clique esquerdo (paridade do
@@ -84,20 +92,17 @@ impl ClipApp {
             let _ = menu.append(&quit);
             TrayIconBuilder::new()
                 .with_menu(Box::new(menu))
-                .with_tooltip("Lab Clip (Ctrl+Alt+V)")
+                .with_tooltip("Lab Clip")
                 .with_icon(tray_icon().expect("ícone rgba"))
                 .build()
                 .expect("tray")
         };
 
-        // Atalho global: Ctrl+Alt+V (o oficial é Ctrl+Shift+V — ver header).
+        // Atalho global configurável (default Ctrl+Alt+V — ver prefs.rs).
         let hotkeys = GlobalHotKeyManager::new().expect("manager de hotkey");
-        hotkeys
-            .register(HotKey::new(
-                Some(Modifiers::CONTROL | Modifiers::ALT),
-                Code::KeyV,
-            ))
-            .expect("registrar Ctrl+Alt+V");
+        let hotkey = prefs::load();
+        hotkeys.register(hotkey.hotkey()).expect("registrar atalho global");
+        let autostart = prefs::autostart_enabled();
 
         Self {
             cfg,
@@ -107,10 +112,28 @@ impl ClipApp {
             textures: HashMap::new(),
             #[cfg(windows)]
             _tray: tray,
-            _hotkeys: hotkeys,
-            visible: true,
+            hotkeys,
+            hotkey,
+            visible: !hidden,
             focus_search: false,
+            settings_open: false,
+            recording: false,
+            autostart,
+            hidden_start: hidden,
+            status: String::new(),
         }
+    }
+
+    fn show(&mut self, ctx: &egui::Context) {
+        self.visible = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        self.focus_search = true;
+    }
+
+    fn hide(&mut self, ctx: &egui::Context) {
+        self.visible = false;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
     }
 
     /// Mostra/esconde, como o handler do oficial: visível E focado → esconde;
@@ -118,13 +141,24 @@ impl ClipApp {
     fn toggle(&mut self, ctx: &egui::Context) {
         let focused = ctx.input(|i| i.viewport().focused.unwrap_or(false));
         if self.visible && focused {
-            self.visible = false;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            self.hide(ctx);
         } else {
-            self.visible = true;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-            self.focus_search = true;
+            self.show(ctx);
+        }
+    }
+
+    /// Troca o atalho global: desregistra o antigo, registra o novo, persiste.
+    fn set_hotkey(&mut self, hk: HotkeyPref) {
+        let _ = self.hotkeys.unregister(self.hotkey.hotkey());
+        if self.hotkeys.register(hk.hotkey()).is_ok() {
+            self.hotkey = hk;
+            prefs::save(&hk);
+            self.status = format!("{} ✓", hk.display());
+        } else {
+            // Registro falhou (ex.: em uso por outro app) — o antigo segue
+            // ativo porque não foi desregistrado com sucesso antes.
+            let _ = self.hotkeys.register(self.hotkey.hotkey());
+            self.status = "⚠ não foi possível registrar o atalho".into();
         }
     }
 
@@ -199,6 +233,58 @@ enum RowView {
 
 impl eframe::App for ClipApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Início com --hidden (autostart): nasce direto na bandeja.
+        if self.hidden_start {
+            self.hidden_start = false;
+            self.hide(ctx);
+        }
+
+        // Fechar (X) minimiza pra bandeja em vez de encerrar — SÓ no Windows,
+        // onde existe bandeja. (No Linux não há bandeja: X fecha de verdade.)
+        #[cfg(windows)]
+        if ctx.input(|i| i.viewport().close_requested()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.hide(ctx);
+        }
+
+        // Captura de atalho (modo "Definir…"): primeira tecla não-modificadora
+        // mapeável fecha o pacote (Ctrl/Shift/Alt/Win vêm pelos Modifiers).
+        if self.recording {
+            let captured: Option<HotkeyPref> = ctx.input(|i| {
+                for ev in &i.events {
+                    if let egui::Event::Key {
+                        key,
+                        pressed: true,
+                        ..
+                    } = ev
+                    {
+                        if *key == egui::Key::Escape {
+                            return None; // cancela (sinalizado pelo caller)
+                        }
+                        if let Some(code) = prefs::egui_key_to_code(*key) {
+                            return Some(HotkeyPref {
+                                mods: prefs::egui_mods_to_gh(i.modifiers),
+                                code,
+                            });
+                        }
+                    }
+                }
+                None
+            });
+            // Escape não produz Some nem Some de code — distinguir cancel:
+            let esc = ctx.input(|i| {
+                i.events.iter().any(|e| {
+                    matches!(e, egui::Event::Key { key: egui::Key::Escape, pressed: true, .. })
+                })
+            });
+            if let Some(hk) = captured {
+                self.set_hotkey(hk);
+                self.recording = false;
+            } else if esc {
+                self.recording = false;
+            }
+        }
+
         // ── eventos de fora (bandeja, atalho, poller) ────────────────────
         #[cfg(windows)]
         {
@@ -235,8 +321,12 @@ impl eframe::App for ClipApp {
         egui::TopBottomPanel::top("topo").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.strong("Lab Clip");
-                ui.label(egui::RichText::new("Ctrl+Alt+V").small().weak());
+                ui.label(egui::RichText::new(self.hotkey.display()).small().weak());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("⚙").on_hover_text(i18n::t(self.cfg.lang, Key::Settings)).clicked() {
+                        self.settings_open = true;
+                        self.autostart = prefs::autostart_enabled();
+                    }
                     if lab_ui::settings_ui(ui, &mut self.cfg) {
                         theme::apply(ctx, self.cfg.theme);
                         let _ = config::save(APP_ID, &self.cfg);
@@ -459,5 +549,53 @@ impl eframe::App for ClipApp {
                 });
             });
         });
+
+        // ── janela de configurações (atalho + autostart) ─────────────────
+        if self.settings_open {
+            let mut open = true;
+            let lang = self.cfg.lang;
+            let t = |k: Key| i18n::t(lang, k);
+            egui::Window::new(t(Key::Settings))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(t(Key::Hotkey));
+                        ui.monospace(self.hotkey.display());
+                        if ui.button(t(Key::Define)).clicked() {
+                            self.recording = true;
+                        }
+                    });
+                    if self.recording {
+                        ui.label(
+                            egui::RichText::new(t(Key::PressKeys))
+                                .color(ui.style().visuals.warn_fg_color),
+                        );
+                    }
+                    ui.add_space(4.0);
+                    let before = self.autostart;
+                    ui.checkbox(&mut self.autostart, t(Key::Autostart));
+                    if self.autostart != before {
+                        match prefs::set_autostart(self.autostart) {
+                            Ok(()) => self.status = format!("✓ {}", t(Key::Autostart)),
+                            Err(e) => {
+                                self.autostart = before; // reverte: o SO não obedeceu
+                                self.status = format!("⚠ {e}");
+                            }
+                        }
+                    }
+                    if !self.status.is_empty() {
+                        ui.label(egui::RichText::new(&self.status).small().weak());
+                    }
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new(t(Key::CloseToTray)).small().weak());
+                });
+            if !open {
+                self.settings_open = false;
+                self.recording = false;
+            }
+        }
     }
 }
