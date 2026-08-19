@@ -87,10 +87,22 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-/// Id opaco único (o oficial usa uuid v4 do TS; aqui 128 bits aleatórios em
-/// hex — mesma forma, mesmo tamanho, mesmo significado de "string única").
+/// Id no MESMO formato do oficial (`crypto.randomUUID()` do TS): UUID v4
+/// com traços (8-4-4-4-12). Era 32-hex sem traços — funcional (id é opaco),
+/// mas um parser estrito de UUID reclamaria; agora é indistinguível.
 fn gen_id() -> String {
-    format!("{:032x}", rand::random::<u128>())
+    let mut b = rand::random::<u128>().to_le_bytes();
+    b[6] = (b[6] & 0x0f) | 0x40; // version 4
+    b[8] = (b[8] & 0x3f) | 0x80; // variant 10xx
+    let h = |x: &[u8]| x.iter().map(|c| format!("{c:02x}")).collect::<String>();
+    format!(
+        "{}-{}-{}-{}-{}",
+        h(&b[0..4]),
+        h(&b[4..6]),
+        h(&b[6..8]),
+        h(&b[8..10]),
+        h(&b[10..16])
+    )
 }
 
 /// ACRESCENTA um item de login no vault bruto (mesma forma que `emptyItem`
@@ -142,6 +154,10 @@ pub fn login_triple(raw: &Value, id: &str) -> Option<(String, String, String)> {
 
 /// EDITA um item existente (por id) — mesma escrita conservadora do add: só
 /// toca nos campos do próprio item, tudo ao redor atravessa intacto.
+///
+/// Espelha o `updateItem` do oficial (`store.ts`): se a senha de um LOGIN
+/// mudou (e a anterior não era vazia), a anterior vai pro topo do
+/// `passwordHistory` com cap de 20 entradas.
 pub fn edit_login(
     raw: &mut Value,
     id: &str,
@@ -157,6 +173,17 @@ pub fn edit_login(
         if it.get("id").and_then(Value::as_str) != Some(id) {
             continue;
         }
+        // Histórico: guardar a senha anterior ANTES de sobrescrever
+        // (condições idênticas às do oficial: kind login + senha antiga não
+        // vazia + senha de fato mudou).
+        let old_pass = it
+            .get("login")
+            .and_then(|l| l.get("password"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let is_login = it.get("kind").and_then(Value::as_str) == Some("login");
+
         it["name"] = json!(name);
         it["updatedAt"] = json!(now_ms());
         // login pode não existir em item de outra classe → cria com a forma
@@ -169,13 +196,25 @@ pub fn edit_login(
             login.insert("password".into(), json!(password));
             login.insert("totp".into(), json!(totp));
         }
+
+        if is_login && !old_pass.is_empty() && old_pass != password {
+            let mut hist: Vec<Value> = it
+                .get("passwordHistory")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            hist.insert(0, json!({ "password": old_pass, "at": now_ms() }));
+            hist.truncate(20); // cap do oficial
+            it["passwordHistory"] = Value::Array(hist);
+        }
         return true;
     }
     false
 }
 
-/// Exclusão LÓGICA (lixeira do oficial): marca `deletedAt`, não remove — um
-/// `.tkeys` aberto no LocalKeys continua vendo o item na lixeira.
+/// Exclusão LÓGICA (lixeira do oficial): marca `deletedAt` — e SÓ ele, como
+/// o `trashItem` do oficial (não toca em `updatedAt`). Um `.tkeys` aberto no
+/// LocalKeys continua vendo o item na lixeira.
 pub fn delete_login(raw: &mut Value, id: &str) -> bool {
     let Some(items) = raw.get_mut("items").and_then(Value::as_array_mut) else {
         return false;
@@ -183,7 +222,6 @@ pub fn delete_login(raw: &mut Value, id: &str) -> bool {
     for it in items.iter_mut() {
         if it.get("id").and_then(Value::as_str) == Some(id) {
             it["deletedAt"] = json!(now_ms());
-            it["updatedAt"] = json!(now_ms());
             return true;
         }
     }
@@ -317,13 +355,76 @@ mod tests {
     fn exclusao_e_logica_e_some_da_view() {
         let mut v = vault_com_item();
         let id = v["items"][0]["id"].as_str().unwrap().to_string();
+        // updatedAt original, pra provar que a lixeira NÃO o mexe (o
+        // trashItem do oficial só toca em deletedAt).
+        let updated_antes = v["items"][0]["updatedAt"].clone();
         assert!(delete_login(&mut v, &id));
         // linha continua no JSON (lixeira do oficial)...
         assert_eq!(v["items"].as_array().unwrap().len(), 1);
         assert!(v["items"][0]["deletedAt"].is_number());
+        assert_eq!(v["items"][0]["updatedAt"], updated_antes);
         // ...mas fora da lista
         assert!(items_view(&v).is_empty());
         assert!(!delete_login(&mut v, "não-existe"));
+    }
+
+    #[test]
+    fn id_igual_ao_randomuuid_do_oficial() {
+        // 8-4-4-4-12, nibble de versão 4 e variante 8/9/a/b — o formato
+        // exato de crypto.randomUUID() no TS.
+        let id = gen_id();
+        let part: Vec<&str> = id.split('-').collect();
+        assert_eq!(
+            part.iter().map(|p| p.len()).collect::<Vec<_>>(),
+            vec![8, 4, 4, 4, 12]
+        );
+        assert!(id.chars().all(|c| c.is_ascii_hexdigit() || c == '-'));
+        assert_eq!(&id[14..15], "4", "version nibble");
+        assert!(
+            ['8', '9', 'a', 'b'].contains(&id.chars().nth(19).unwrap()),
+            "variante RFC 4122"
+        );
+        assert_ne!(gen_id(), gen_id());
+    }
+
+    #[test]
+    fn editar_senha_guarda_a_anterior_no_historico() {
+        // Mesma regra do updateItem do oficial: login + senha antiga não vazia
+        // + senha mudou → {password, at} no topo, cap 20.
+        let mut v: Value = serde_json::from_str(
+            r#"{"version":1,"folders":[],"items":[{"id":"x","kind":"login","name":"N",
+               "favorite":false,"folderId":null,"notes":"","createdAt":1,"updatedAt":1,"deletedAt":null,
+               "login":{"username":"u","password":"velha","uris":[],"totp":""}}]}"#,
+        )
+        .unwrap();
+        assert!(edit_login(&mut v, "x", "N", "u", "nova1", ""));
+        let hist = v["items"][0]["passwordHistory"].as_array().unwrap();
+        assert_eq!(hist.len(), 1);
+        assert_eq!(hist[0]["password"], "velha");
+        assert!(hist[0]["at"].is_number());
+
+        // Segunda troca: a "nova1" entra no TOPO, a "velha" desce.
+        assert!(edit_login(&mut v, "x", "N", "u", "nova2", ""));
+        let hist = v["items"][0]["passwordHistory"].as_array().unwrap();
+        assert_eq!(hist.len(), 2);
+        assert_eq!(hist[0]["password"], "nova1");
+        assert_eq!(hist[1]["password"], "velha");
+    }
+
+    #[test]
+    fn editar_sem_trocar_senha_nao_cria_historico() {
+        let mut v: Value = serde_json::from_str(
+            r#"{"version":1,"folders":[],"items":[{"id":"x","kind":"login","name":"N",
+               "favorite":false,"folderId":null,"notes":"","createdAt":1,"updatedAt":1,"deletedAt":null,
+               "login":{"username":"u","password":"igual","uris":[],"totp":""}}]}"#,
+        )
+        .unwrap();
+        assert!(edit_login(&mut v, "x", "Outro nome", "u2", "igual", ""));
+        assert!(
+            v["items"][0].get("passwordHistory").is_none(),
+            "senha não mudou → sem histórico (igual ao oficial)"
+        );
+        assert_eq!(v["items"][0]["name"], "Outro nome");
     }
 
     #[test]
