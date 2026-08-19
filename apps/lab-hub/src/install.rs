@@ -6,7 +6,7 @@
 //! binário não é dado de usuário itinerante (mesma razão do cache). O hub
 //! e o `installed.json` (com as versões) ficam na raiz `LabSuite\`.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 
@@ -192,7 +192,8 @@ fn download_to(url: &str, dest: &Path, tx: &Sender<f32>) -> Result<(), String> {
 // ── instalação ────────────────────────────────────────────────────────
 
 /// Extrai o zip da release (um .exe na raiz) e devolve o caminho dele.
-#[cfg(windows)]
+/// Compila nas duas plataformas (o zip é crate multiplataforma); só é CHAMADO
+/// no Windows — assim o CI do Linux também valida este código.
 fn extract_zip(zip_path: &Path, dest_dir: &Path) -> Result<PathBuf, String> {
     let file = std::fs::File::open(zip_path).map_err(|e| e.to_string())?;
     let mut arc = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;

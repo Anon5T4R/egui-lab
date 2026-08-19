@@ -70,16 +70,16 @@ fn spawn_latest(tx: Sender<Msg>) {
 fn spawn_install(app: &'static AppDef, tag: String, tx: Sender<Msg>) {
     std::thread::spawn(move || {
         let (itx, irx) = std::sync::mpsc::channel::<f32>();
-        // Repassa o progresso de download pro canal da UI.
+        // Repassa o progresso de download pro canal da UI (clone: o `tx`
+        // original segue na mão desta thread pro Done).
+        let tx_fwd = tx.clone();
         std::thread::spawn(move || {
             for p in irx {
-                let _ = tx.send(Msg::Progress(p));
+                let _ = tx_fwd.send(Msg::Progress(p));
             }
         });
         let mut map = install::load_installed();
-        let res = install::install_app(app, &tag, &mut map, &itx)
-            .map(|_| app.id.to_string())
-            .map_err(|e| e);
+        let res = install::install_app(app, &tag, &mut map, &itx).map(|_| app.id.to_string());
         let _ = tx.send(Msg::Done(res));
     });
 }
@@ -150,8 +150,14 @@ impl eframe::App for HubApp {
                     }
                 }
             }
-            // Canal só de latest: fecha sozinho quando a thread morre.
-            if self.busy.is_none() && self.rx.as_ref().is_some_and(|r| r.try_recv() == Err(std::sync::mpsc::TryRecvError::Disconnected)) {
+            // Canal só de latest: fecha sozinho quando a thread morre
+            // (matches! em vez de ==: TryRecvError não é PartialEq).
+            if self.busy.is_none()
+                && matches!(
+                    self.rx.as_ref().map(|r| r.try_recv()),
+                    Some(Err(std::sync::mpsc::TryRecvError::Disconnected))
+                )
+            {
                 self.rx = None;
             }
         }
