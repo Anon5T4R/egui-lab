@@ -110,6 +110,23 @@ leitura: o terreno onde o webview ganha com folga.
    captura teclas + modificadores, persiste em `prefs.json`) e **iniciar com
    o sistema** (checkbox; registro `Run` no Windows / `.desktop` no Linux,
    arranca com `--hidden` direto na bandeja).
+9. **Onda 9 (feita — o conserto da bandeja):** a v0.2.5 tinha DOIS bugs que
+   matavam a bandeja: **(a)** segunda instância panicava no boot
+   (`AlreadyRegistered` do atalho, invisível em release) → agora há
+   **single-instance** (lock de arquivo via `File::try_lock` + flag
+   "mostra-te": quem chega segundo acorda o primeiro e sai) e o registro do
+   atalho é graceful (segue sem atalho e avisa); **(b)** janela OCULTA no
+   Windows não recebe `WM_PAINT` → o winit não entrega `RedrawRequested` →
+   **o eframe congela e o `update()` nunca mais roda** (hotkey e bandeja
+   eram drenados lá = zumbi). A arquitetura mudou de vez: **controller em
+   thread própria** (dono do atalho global, bandeja via `set_event_handler`,
+   poller e single-instance) que mostra/esconde a janela com **`ShowWindow`
+   Win32 direto** (`winctl.rs`) — viewport command só é processado durante
+   um frame, e frame é exatamente o que não existe com janela oculta. O
+   `update()` virou só a view (adota itens do buffer compartilhado).
+   Validado por bateria automatizada: X esconde (processo vivo), hotkey
+   acorda janela oculta, toggle completo, segunda instância acorda a
+   primeira — sem panics.
 
 ## Releases
 

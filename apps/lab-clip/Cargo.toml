@@ -23,3 +23,7 @@ tray-icon.workspace = true
 clipboard-win = "5.4"
 # Autostart no registro (Run) — mesmo desenho do LocalClip oficial
 winreg = "0.55"
+# Controle da janela fora do ciclo de pintura (app de bandeja: janela oculta
+# não recebe WM_PAINT no Windows → o eframe congela; o controller acorda a
+# janela com ShowWindow direto).
+windows = { version = "0.58", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_System_Threading"] }
