@@ -103,6 +103,8 @@ struct KeysApp {
     add_user: String,
     add_pass: String,
     add_totp: String,
+    /// Exclusão esperando confirmação (um clique sem querer não apaga).
+    delete_ask: Option<(String, String)>,
     // feedback "copiado"
     copied_hint: Option<(String, std::time::Instant)>,
 }
@@ -127,6 +129,7 @@ impl KeysApp {
             add_user: String::new(),
             add_pass: String::new(),
             add_totp: String::new(),
+            delete_ask: None,
             copied_hint: None,
         };
         app.path = last_path().unwrap_or_default();
@@ -150,6 +153,7 @@ impl KeysApp {
         self.add_pass.clear();
         self.form_open = false;
         self.form_edit_id = None;
+        self.delete_ask = None;
     }
 
     fn adopt(&mut self, session: crypto::SessionKey, raw: serde_json::Value) {
@@ -521,6 +525,34 @@ impl eframe::App for KeysApp {
             self.form_open = open;
         }
 
+        // confirmação de exclusão (lixeira — mas não sem querer).
+        if let Some((id, name)) = self.delete_ask.clone() {
+            let mut open = true;
+            egui::Window::new(t(Key::Delete))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    ui.strong(&name);
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new(format!("{} ({})", t(Key::Delete), t(Key::Lock))).weak());
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(t(Key::Confirm)).clicked() {
+                            self.delete_item(&id);
+                            self.delete_ask = None;
+                        }
+                        if ui.button(t(Key::Cancel)).clicked() {
+                            self.delete_ask = None;
+                        }
+                    });
+                });
+            if !open {
+                self.delete_ask = None;
+            }
+        }
+
         if let Some((what, at)) = &self.copied_hint {
             if at.elapsed() < std::time::Duration::from_secs(2) {
                 egui::Window::new("ok")
@@ -827,8 +859,9 @@ impl KeysApp {
                             .on_hover_text("lixeira")
                             .clicked()
                         {
-                            let idc = id.clone();
-                            self.delete_item(&idc);
+                            // Confirmação: exclusão é reversível só na lixeira
+                            // do oficial — clique sem querer não apaga.
+                            self.delete_ask = Some((id.clone(), name.clone()));
                         }
                     });
                     ui.separator();

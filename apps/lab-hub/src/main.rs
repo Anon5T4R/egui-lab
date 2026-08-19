@@ -1,7 +1,10 @@
 //! lab-hub — o "TaylorHub do lab": catálogo dos pilotos egui, download das
 //! releases do monorepo, instalação em `%LOCALAPPDATA%\LabSuite\<app>\` e
 //! atalhos com os ícones REAIS dos irmãos Tauri (baixados dos repos da
-//! suíte). Os 32 apps da suíte seguem no TaylorHub; este cuida só do lab.
+//! suíte). Onda 6: ícones dos cards ANTES de instalar (baixa o 128px do
+//! irmão na primeira exibição), desinstalar (com confirmação, remove
+//! atalhos), limpeza de sobras e abrir a pasta de instalação.
+//! Os 32 apps da suíte seguem no TaylorHub; este cuida só do lab.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -26,7 +29,7 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Lab Hub")
-            .with_inner_size([520.0, 560.0]),
+            .with_inner_size([560.0, 620.0]),
         ..Default::default()
     };
     eframe::run_native(
@@ -59,6 +62,8 @@ struct HubApp {
     progress: f32,
     status: String,
     textures: HashMap<String, egui::TextureHandle>,
+    /// Desinstalação esperando confirmação.
+    uninstall_ask: Option<&'static AppDef>,
 }
 
 fn spawn_latest(tx: Sender<Msg>) {
@@ -86,8 +91,6 @@ fn spawn_install(app: &'static AppDef, tag: String, tx: Sender<Msg>) {
 
 impl HubApp {
     fn new(cfg: Config) -> Self {
-        // Carrega os ícones locais (de instalações anteriores) como texturas
-        // — o download em si acontece na instalação.
         let (tx, rx) = std::sync::mpsc::channel();
         spawn_latest(tx);
         Self {
@@ -100,25 +103,28 @@ impl HubApp {
             progress: 0.0,
             status: String::new(),
             textures: HashMap::new(),
+            uninstall_ask: None,
         }
     }
 
-    fn ensure_icon(&mut self, ctx: &egui::Context, app: &AppDef) {
+    /// Textura do ícone do card a partir do arquivo LOCAL (baixado na
+    /// instalação — decisão do João: ícone aparece depois de instalar,
+    /// sem plumbing de download antecipado).
+    fn ensure_icon(&mut self, ctx: &egui::Context, app: &'static AppDef) {
         if self.textures.contains_key(app.id) {
             return;
         }
         let path = install::icon_path(app.id);
-        let Some(bytes) = std::fs::read(&path).ok() else {
-            return;
-        };
-        if let Ok(img) = image::load_from_memory(&bytes) {
-            let rgba = img.to_rgba8();
-            let size = [rgba.width() as usize, rgba.height() as usize];
-            let color = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
-            self.textures.insert(
-                app.id.to_string(),
-                ctx.load_texture(app.id, color, egui::TextureOptions::default()),
-            );
+        if let Ok(bytes) = std::fs::read(&path) {
+            if let Ok(img) = image::load_from_memory(&bytes) {
+                let rgba = img.to_rgba8();
+                let size = [rgba.width() as usize, rgba.height() as usize];
+                let color = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+                self.textures.insert(
+                    app.id.to_string(),
+                    ctx.load_texture(app.id, color, egui::TextureOptions::default()),
+                );
+            }
         }
     }
 }
@@ -164,7 +170,7 @@ impl eframe::App for HubApp {
             self.rx = None;
         }
         if self.rx.is_some() || self.busy.is_some() {
-            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            ctx.request_repaint_after(std::time::Duration::from_millis(150));
         }
 
         egui::TopBottomPanel::top("topo").show(ctx, |ui| {
@@ -190,6 +196,13 @@ impl eframe::App for HubApp {
                 if ui.small_button("⬇").on_hover_text(RELEASES_PAGE).clicked() {
                     ctx.open_url(egui::OpenUrl::new_tab(RELEASES_PAGE));
                 }
+                if ui.small_button("📂").on_hover_text(i18n::t(self.cfg.lang, Key::OpenFolder)).clicked() {
+                    install::open_install_folder();
+                }
+                if ui.small_button("🧹").on_hover_text(i18n::t(self.cfg.lang, Key::Clean)).clicked() {
+                    let n = install::cleanup(&self.installed);
+                    self.status = format!("🧹 {n}");
+                }
                 ui.label(
                     egui::RichText::new(install::install_root().display().to_string())
                         .small()
@@ -199,9 +212,7 @@ impl eframe::App for HubApp {
             if self.busy.is_some() {
                 let t = i18n::t(self.cfg.lang, Key::Downloading);
                 ui.label(format!("{t}… {:.0}%", self.progress * 100.0));
-                ui.add(
-                    egui::ProgressBar::new(self.progress).show_percentage(),
-                );
+                ui.add(egui::ProgressBar::new(self.progress).show_percentage());
             } else if !self.status.is_empty() {
                 ui.label(egui::RichText::new(&self.status).small().weak());
             }
@@ -223,7 +234,7 @@ impl eframe::App for HubApp {
                 self.ensure_icon(ctx, app);
                 egui::Frame::group(ui.style()).show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        // Ícone real (se já baixado) ou placeholder.
+                        // Ícone real (irmão Tauri) ou placeholder enquanto baixa.
                         let (rect, _) =
                             ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
                         if let Some(tex) = self.textures.get(app.id) {
@@ -281,7 +292,7 @@ impl eframe::App for HubApp {
                             } else {
                                 t(Key::Install)
                             };
-                            let can_install = !busy && self.latest.is_some() && self.busy != Some(app.id);
+                            let can_install = !busy && self.latest.is_some();
                             if ui
                                 .add_enabled(can_install, egui::Button::new(label))
                                 .clicked()
@@ -316,6 +327,13 @@ impl eframe::App for HubApp {
                                         Err(e) => self.status = format!("⚠ {e}"),
                                     }
                                 }
+                                // Desinstalar abre confirmação (clique sem querer).
+                                if ui
+                                    .add_enabled(!busy, egui::Button::new(t(Key::Uninstall)).small())
+                                    .clicked()
+                                {
+                                    self.uninstall_ask = Some(app);
+                                }
                             }
                         });
                     });
@@ -323,6 +341,45 @@ impl eframe::App for HubApp {
                 ui.add_space(4.0);
             }
         });
+
+        // Confirmação de desinstalação (clique sem querer não desinstala).
+        if let Some(app) = self.uninstall_ask {
+            let mut open = true;
+            let lang = self.cfg.lang;
+            let t = |k: Key| i18n::t(lang, k);
+            egui::Window::new(t(Key::Uninstall))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    ui.strong(app.display);
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new(t(Key::UninstallAsk)).weak());
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(t(Key::Confirm)).clicked() {
+                            let mut map = self.installed.clone();
+                            match install::uninstall_app(app, &mut map) {
+                                Ok(()) => {
+                                    self.installed = map;
+                                    self.textures.remove(app.id);
+                                    self.status = format!("🗑 {} ✓", app.display);
+                                }
+                                Err(e) => self.status = format!("⚠ {e}"),
+                            }
+                            self.uninstall_ask = None;
+                        }
+                        if ui.button(t(Key::Cancel)).clicked() {
+                            self.uninstall_ask = None;
+                        }
+                    });
+                });
+            if !open {
+                // X da janela também cancela.
+                self.uninstall_ask = None;
+            }
+        }
 
         // Ações pedidas pela UI deste frame (depois dos borrows fecharem).
         if latest_req {

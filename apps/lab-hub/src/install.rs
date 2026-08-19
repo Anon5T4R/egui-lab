@@ -251,14 +251,13 @@ pub fn install_app(
         out
     };
 
-    // Ícone (do irmão Tauri — falha é silenciosa: atalho usa o default do exe).
-    let _ = download_to(app.icon_ico_url, &icon_path(app.id), tx);
+    // Ícone (do irmão Tauri — falha é silenciosa: atalho usa o default do
+    // exe). Windows: .ico pro .lnk; Linux: PNG pro .desktop.
+    #[cfg(windows)]
+    let icon_url = app.icon_ico_url;
     #[cfg(not(windows))]
-    {
-        // No Linux o .desktop prefere PNG; o download acima (.ico) é descartado.
-        let _ = std::fs::remove_file(icon_path(app.id));
-        let _ = download_to(app.icon_png_url, &icon_path(app.id), tx);
-    }
+    let icon_url = app.icon_png_url;
+    let _ = download_to(icon_url, &icon_path(app.id), tx);
 
     installed.insert(
         app.id.to_string(),
@@ -284,4 +283,51 @@ fn make_executable(path: &Path) -> Result<(), String> {
 #[cfg(not(unix))]
 fn make_executable(_path: &Path) -> Result<(), String> {
     Ok(())
+}
+
+// ── desinstalar / limpeza ─────────────────────────────────────────────
+
+/// Remove o app (pasta, registro, ícone e ATALHOS — o " uninstall" do irmão
+/// TaylorHub/NSIS também limpa os atalhos que ele criou).
+pub fn uninstall_app(
+    app: &AppDef,
+    installed: &mut std::collections::HashMap<String, InstalledApp>,
+) -> Result<(), String> {
+    std::fs::remove_dir_all(app_dir(app.id)).map_err(|e| format!("{}: {e}", app_dir(app.id).display()))?;
+    installed.remove(app.id);
+    save_installed(installed);
+    let _ = crate::shortcut::remove(app.id, app.display, crate::shortcut::Where::StartMenu);
+    let _ = crate::shortcut::remove(app.id, app.display, crate::shortcut::Where::Desktop);
+    let _ = std::fs::remove_file(icon_path(app.id));
+    Ok(())
+}
+
+/// Limpeza: staging de instalações abortadas e pastas órfãs (dir existe mas
+/// não tem entrada no installed.json — instalação que morreu no meio).
+/// Devolve quantos itens saíram.
+pub fn cleanup(installed: &std::collections::HashMap<String, InstalledApp>) -> usize {
+    let mut n = 0;
+    let staging = install_root().join(".staging");
+    if std::fs::remove_dir_all(&staging).is_ok() {
+        n += 1;
+    }
+    for app in APPS {
+        let dir = app_dir(app.id);
+        if dir.exists() && !installed.contains_key(app.id) {
+            if std::fs::remove_dir_all(&dir).is_ok() {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+/// Abre a pasta de instalação no gerenciador de arquivos do SO.
+pub fn open_install_folder() {
+    let root = install_root();
+    let _ = std::fs::create_dir_all(&root);
+    #[cfg(windows)]
+    let _ = std::process::Command::new("explorer").arg(root).spawn();
+    #[cfg(not(windows))]
+    let _ = std::process::Command::new("xdg-open").arg(root).spawn();
 }

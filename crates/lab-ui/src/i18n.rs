@@ -87,6 +87,11 @@ pub enum Key {
     Refresh,
     UpToDate,
     NotInstalled,
+    // lab-hub onda 6
+    Uninstall,
+    Clean,
+    OpenFolder,
+    UninstallAsk,
 }
 
 /// Todas as chaves — usado pelo teste de completude (fora de teste o match
@@ -150,6 +155,10 @@ const KEYS: &[Key] = &[
     Key::Refresh,
     Key::UpToDate,
     Key::NotInstalled,
+    Key::Uninstall,
+    Key::Clean,
+    Key::OpenFolder,
+    Key::UninstallAsk,
 ];
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -421,6 +430,26 @@ pub fn t(lang: Lang, key: Key) -> &'static str {
             Lang::Pt => "não instalado",
             Lang::En => "not installed",
             Lang::Es => "no instalado",
+        },
+        Key::Uninstall => match lang {
+            Lang::Pt => "Desinstalar",
+            Lang::En => "Uninstall",
+            Lang::Es => "Desinstalar",
+        },
+        Key::Clean => match lang {
+            Lang::Pt => "Limpeza",
+            Lang::En => "Cleanup",
+            Lang::Es => "Limpieza",
+        },
+        Key::OpenFolder => match lang {
+            Lang::Pt => "Abrir pasta",
+            Lang::En => "Open folder",
+            Lang::Es => "Abrir carpeta",
+        },
+        Key::UninstallAsk => match lang {
+            Lang::Pt => "Desinstalar e remover atalhos?",
+            Lang::En => "Uninstall and remove shortcuts?",
+            Lang::Es => "¿Desinstalar y quitar accesos?",
         },
     }
 }
