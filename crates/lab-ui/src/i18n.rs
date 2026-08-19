@@ -92,6 +92,9 @@ pub enum Key {
     Clean,
     OpenFolder,
     UninstallAsk,
+    // lab-hub: card do próprio hub
+    Running,
+    Restart,
 }
 
 /// Todas as chaves — usado pelo teste de completude (fora de teste o match
@@ -159,6 +162,8 @@ const KEYS: &[Key] = &[
     Key::Clean,
     Key::OpenFolder,
     Key::UninstallAsk,
+    Key::Running,
+    Key::Restart,
 ];
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -450,6 +455,16 @@ pub fn t(lang: Lang, key: Key) -> &'static str {
             Lang::Pt => "Desinstalar e remover atalhos?",
             Lang::En => "Uninstall and remove shortcuts?",
             Lang::Es => "¿Desinstalar y quitar accesos?",
+        },
+        Key::Running => match lang {
+            Lang::Pt => "rodando",
+            Lang::En => "running",
+            Lang::Es => "ejecutando",
+        },
+        Key::Restart => match lang {
+            Lang::Pt => "reinicie o Lab Hub",
+            Lang::En => "restart Lab Hub",
+            Lang::Es => "reinicie Lab Hub",
         },
     }
 }

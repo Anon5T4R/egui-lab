@@ -25,6 +25,9 @@ const APP_ID: &str = "lab-hub";
 const RELEASES_PAGE: &str = "https://github.com/Anon5T4R/egui-lab/releases/latest";
 
 fn main() -> eframe::Result<()> {
+    // Limpa o .old de um auto-update anterior (se houver).
+    install::cleanup_self_old();
+
     let cfg = config::load(APP_ID);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -47,8 +50,10 @@ enum Msg {
     /// Tag da última release (None = falhou; status mostra o motivo).
     Latest(Result<String, String>),
     Progress(f32),
-    /// Fim da instalação: Ok(app id) ou Err(motivo).
+    /// Fim da instalação: Ok(app id) ou Err(motivo). "lab-hub" = auto-update.
     Done(Result<String, String>),
+    /// Ícone baixado (o do próprio hub, no boot) — textura no próximo frame.
+    IconReady,
 }
 
 struct HubApp {
@@ -89,10 +94,34 @@ fn spawn_install(app: &'static AppDef, tag: String, tx: Sender<Msg>) {
     });
 }
 
+fn spawn_card_icon(tx: Sender<Msg>) {
+    std::thread::spawn(move || {
+        if install::fetch_icon_file(&install::HUB).is_ok() {
+            let _ = tx.send(Msg::IconReady);
+        }
+    });
+}
+
+fn spawn_self_update(tag: String, tx: Sender<Msg>) {
+    std::thread::spawn(move || {
+        let (itx, irx) = std::sync::mpsc::channel::<f32>();
+        let tx_fwd = tx.clone();
+        std::thread::spawn(move || {
+            for p in irx {
+                let _ = tx_fwd.send(Msg::Progress(p));
+            }
+        });
+        let res = install::update_self(&tag, &itx).map(|_| "lab-hub".to_string());
+        let _ = tx.send(Msg::Done(res));
+    });
+}
+
 impl HubApp {
     fn new(cfg: Config) -> Self {
         let (tx, rx) = std::sync::mpsc::channel();
-        spawn_latest(tx);
+        spawn_latest(tx.clone());
+        // Ícone do próprio hub (o card dele aparece completo desde o boot).
+        spawn_card_icon(tx);
         Self {
             cfg,
             installed: install::load_installed(),
@@ -134,6 +163,7 @@ impl eframe::App for HubApp {
         // Drena as mensagens das threads (se houver alguma em voo).
         let mut latest_req = false;
         let mut install_req: Option<&'static AppDef> = None;
+        let mut self_req = false;
         // self.rx é emprestado no drain — desligá-lo é postergado pra fora.
         let mut drop_rx = false;
         if let Some(rx) = &self.rx {
@@ -149,12 +179,23 @@ impl eframe::App for HubApp {
                         self.installed = install::load_installed();
                         self.busy = None;
                         drop_rx = true;
-                        self.status = format!("{id} ✓");
+                        if id == "lab-hub" {
+                            // Auto-update: o exe novo está no lugar; falta reiniciar.
+                            self.status =
+                                format!("✓ {}", i18n::t(self.cfg.lang, Key::Restart));
+                        } else {
+                            self.status = format!("{id} ✓");
+                        }
                     }
                     Msg::Done(Err(e)) => {
                         self.busy = None;
                         drop_rx = true;
                         self.status = format!("⚠ {e}");
+                    }
+                    Msg::IconReady => {
+                        // Textura carrega no ensure_icon do próximo frame
+                        // (o repaint de 150ms já está rodando enquanto o
+                        // canal vive).
                     }
                 }
             }
@@ -228,6 +269,106 @@ impl eframe::App for HubApp {
                         .color(egui::Color32::LIGHT_RED),
                 );
                 ui.add_space(6.0);
+            }
+
+            // ── o próprio hub: card de sempre, mas sem Instalar/Abrir/─────
+            // Desinstalar — ele JÁ está rodando; o que faz é atalho pra si
+            // mesmo e auto-update (trocando o próprio exe em execução).
+            {
+                let hub = &install::HUB;
+                self.ensure_icon(ctx, hub);
+                let own = format!("v{}", env!("CARGO_PKG_VERSION"));
+                let outdated = self.latest.as_ref().is_some_and(|l| *l != own);
+                egui::Frame::group(ui.style()).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
+                        if let Some(tex) = self.textures.get(hub.id) {
+                            ui.put(
+                                rect,
+                                egui::Image::from_texture(tex).fit_to_exact_size(rect.size()),
+                            );
+                        } else {
+                            ui.painter().circle_filled(
+                                rect.center(),
+                                16.0,
+                                ui.style().visuals.weak_text_color(),
+                            );
+                        }
+
+                        ui.vertical(|ui| {
+                            ui.strong(hub.display);
+                            let line = match (&self.latest, outdated) {
+                                (Some(_), false) => format!(
+                                    "{} {} · {}",
+                                    own,
+                                    t(Key::Running),
+                                    t(Key::UpToDate)
+                                ),
+                                (Some(l), true) => format!(
+                                    "{} {} · {} {}",
+                                    own,
+                                    t(Key::Running),
+                                    t(Key::Available),
+                                    l
+                                ),
+                                (None, _) => format!("{} {}", own, t(Key::Running)),
+                            };
+                            ui.label(if outdated {
+                                egui::RichText::new(line).small().color(ui.style().visuals.warn_fg_color)
+                            } else {
+                                egui::RichText::new(line).small().weak()
+                            });
+                        });
+
+                        ui.with_layout(
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                let busy = self.busy.is_some();
+                                if outdated
+                                    && ui
+                                        .add_enabled(!busy, egui::Button::new(t(Key::Update)))
+                                        .clicked()
+                                {
+                                    self_req = true;
+                                }
+                                let exe = std::env::current_exe().unwrap_or_default();
+                                let icon = install::icon_path(hub.id);
+                                if ui
+                                    .add_enabled(!busy, egui::Button::new(t(Key::StartMenu)).small())
+                                    .clicked()
+                                {
+                                    match shortcut::create(
+                                        hub.id,
+                                        hub.display,
+                                        &exe,
+                                        &icon,
+                                        shortcut::Where::StartMenu,
+                                    ) {
+                                        Ok(p) => self.status = format!("✓ {}", p.display()),
+                                        Err(e) => self.status = format!("⚠ {e}"),
+                                    }
+                                }
+                                if ui
+                                    .add_enabled(!busy, egui::Button::new(t(Key::Desktop)).small())
+                                    .clicked()
+                                {
+                                    match shortcut::create(
+                                        hub.id,
+                                        hub.display,
+                                        &exe,
+                                        &icon,
+                                        shortcut::Where::Desktop,
+                                    ) {
+                                        Ok(p) => self.status = format!("✓ {}", p.display()),
+                                        Err(e) => self.status = format!("⚠ {e}"),
+                                    }
+                                }
+                            },
+                        );
+                    });
+                });
+                ui.add_space(4.0);
             }
 
             for app in install::APPS {
@@ -394,6 +535,17 @@ impl eframe::App for HubApp {
             spawn_install(app, tag, tx);
             self.rx = Some(rx);
             self.busy = Some(app.id);
+            self.progress = 0.0;
+            self.status.clear();
+        }
+
+        // Auto-update pedido pelo card do próprio hub.
+        if self_req {
+            let tag = self.latest.clone().unwrap_or_default();
+            let (tx, rx) = std::sync::mpsc::channel();
+            spawn_self_update(tag, tx);
+            self.rx = Some(rx);
+            self.busy = Some("lab-hub");
             self.progress = 0.0;
             self.status.clear();
         }

@@ -96,6 +96,14 @@ leitura: o terreno onde o webview ganha com folga.
    app instalado. HTTP via `ureq` (sync+rustls, zero tokio/openssl).
    **O repo é público por causa disso** — download anônimo de release asset
    não existe em repo privado (mesmo modelo do TaylorHub).
+6. **Onda 6 (feita):** ícone embutido no `.exe` do hub (`winresource` +
+   `icon.ico`), **desinstalar com confirmação** (remove pasta, registro e
+   atalhos), **limpeza** de staging/órfãos, **abrir pasta** de instalação, e
+   confirmação de exclusão no `lab-keys` (clique sem querer não apaga).
+7. **Onda 7 (feita):** o hub se vê — **card do próprio hub** com "vX
+   rodando" + versão disponível, **atalhos pra si mesmo** e **auto-update**
+   (renomeia o exe em execução pra `.old`, copia o novo no lugar, pede
+   reinício; `.old` é limpo no boot seguinte).
 
 ## Releases
 

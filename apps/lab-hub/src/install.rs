@@ -66,6 +66,17 @@ pub const APPS: &[AppDef] = &[
 pub const REPO: &str = "Anon5T4R/egui-lab";
 const RELEASES_LATEST: &str = "https://api.github.com/repos/Anon5T4R/egui-lab/releases/latest";
 
+/// O próprio hub — card separado (não entra em APPS: não tem "instalar" nem
+/// "desinstalar", é atualização de si mesmo com o exe rodando).
+pub const HUB: AppDef = AppDef {
+    id: "lab-hub",
+    display: "Lab Hub",
+    win_asset: "lab-hub-windows-x64.zip",
+    linux_asset: "Lab_Hub-x86_64.AppImage",
+    icon_ico_url: "https://raw.githubusercontent.com/Anon5T4R/egui-lab/main/apps/lab-hub/icon.ico",
+    icon_png_url: "https://raw.githubusercontent.com/Anon5T4R/egui-lab/main/icons/lab-hub.png",
+};
+
 // ── onde as coisas moram ──────────────────────────────────────────────
 
 /// Raiz da instalação (`%LOCALAPPDATA%\LabSuite` no Windows,
@@ -283,6 +294,66 @@ fn make_executable(path: &Path) -> Result<(), String> {
 #[cfg(not(unix))]
 fn make_executable(_path: &Path) -> Result<(), String> {
     Ok(())
+}
+
+/// Baixa o ícone do app se ainda não existir localmente (o hub faz pra SI
+/// MESMO no boot — os outros baixam na instalação).
+pub fn fetch_icon_file(app: &AppDef) -> Result<PathBuf, String> {
+    let dest = icon_path(app.id);
+    if dest.exists() {
+        return Ok(dest);
+    }
+    #[cfg(windows)]
+    let url = app.icon_ico_url;
+    #[cfg(not(windows))]
+    let url = app.icon_png_url;
+    let (tx, _rx) = std::sync::mpsc::channel();
+    download_to(url, &dest, &tx)?;
+    Ok(dest)
+}
+
+/// Auto-update do hub com o exe RODANDO: baixa a nova versão, renomeia o
+/// atual pra `.old` (Windows e Linux permitem renomear binário em execução),
+/// copia o novo pro lugar (copy, não rename — o hub pode morar fora do
+/// volume do LabSuite) e deixa o `.old` pra ser limpo no próximo boot.
+/// O usuário reinicia o hub pra efetivar.
+pub fn update_self(tag: &str, tx: &Sender<f32>) -> Result<(), String> {
+    let staging = install_root().join(".staging").join("lab-hub");
+    let _ = std::fs::remove_dir_all(&staging);
+    std::fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
+
+    let asset = if cfg!(windows) { HUB.win_asset } else { HUB.linux_asset };
+    let zip_path = staging.join(asset);
+    download_to(&asset_url(tag, asset), &zip_path, tx)?;
+    let _ = tx.send(0.95);
+
+    let new_exe = if cfg!(windows) {
+        extract_zip(&zip_path, &staging)?
+    } else {
+        make_executable(&zip_path)?;
+        zip_path
+    };
+
+    let current = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
+    let old = current.with_extension("old");
+    let _ = std::fs::remove_file(&old);
+    std::fs::rename(&current, &old).map_err(|e| format!("renomear atual: {e}"))?;
+    if let Err(e) = std::fs::copy(&new_exe, &current) {
+        // volta o antigo pro lugar — sem deixar o usuário a pé
+        let _ = std::fs::rename(&old, &current);
+        return Err(format!("copiar novo: {e}"));
+    }
+    let _ = std::fs::remove_file(&new_exe);
+    let _ = std::fs::remove_dir_all(&staging);
+    let _ = tx.send(1.0);
+    Ok(())
+}
+
+/// Remove o `.old` de um auto-update anterior (chamado no boot).
+pub fn cleanup_self_old() {
+    if let Ok(exe) = std::env::current_exe() {
+        let _ = std::fs::remove_file(exe.with_extension("old"));
+    }
 }
 
 // ── desinstalar / limpeza ─────────────────────────────────────────────
