@@ -36,7 +36,6 @@ pub enum Key {
     Cores,
     Uptime,
     Disks,
-    Network,
     Processes,
     Filter,
     Name,
@@ -75,6 +74,8 @@ pub enum Key {
     ForgetKey,
     Edit,
     SecondsShort,
+    // lab-keys: confirmação de exclusão
+    TrashHint,
     // lab-hub
     Install,
     Update,
@@ -119,7 +120,6 @@ const KEYS: &[Key] = &[
     Key::Cores,
     Key::Uptime,
     Key::Disks,
-    Key::Network,
     Key::Processes,
     Key::Filter,
     Key::Name,
@@ -154,6 +154,7 @@ const KEYS: &[Key] = &[
     Key::ForgetKey,
     Key::Edit,
     Key::SecondsShort,
+    Key::TrashHint,
     Key::Install,
     Key::Update,
     Key::Open,
@@ -226,11 +227,6 @@ pub fn t(lang: Lang, key: Key) -> &'static str {
             Lang::Pt => "Discos",
             Lang::En => "Disks",
             Lang::Es => "Discos",
-        },
-        Key::Network => match lang {
-            Lang::Pt => "Rede",
-            Lang::En => "Network",
-            Lang::Es => "Red",
         },
         Key::Processes => match lang {
             Lang::Pt => "Processos",
@@ -478,6 +474,11 @@ pub fn t(lang: Lang, key: Key) -> &'static str {
             Lang::Pt => "reinicie o Lab Hub",
             Lang::En => "restart Lab Hub",
             Lang::Es => "reinicie Lab Hub",
+        },
+        Key::TrashHint => match lang {
+            Lang::Pt => "O item vai pra lixeira — recuperável no LocalKeys oficial.",
+            Lang::En => "The item goes to trash — recoverable in the official LocalKeys.",
+            Lang::Es => "El elemento va a la papelera — recuperable en LocalKeys oficial.",
         },
         Key::Settings => match lang {
             Lang::Pt => "Configurações",

@@ -212,7 +212,7 @@ pub fn edit_login(
     false
 }
 
-/// Exclusão LÓGICA (lixeira do oficial): marca `deletedAt` — e SÓ ele, como
+/// Exclusão LÓGica (lixeira do oficial): marca `deletedAt` — e SÓ ele, como
 /// o `trashItem` do oficial (não toca em `updatedAt`). Um `.tkeys` aberto no
 /// LocalKeys continua vendo o item na lixeira.
 pub fn delete_login(raw: &mut Value, id: &str) -> bool {
@@ -226,11 +226,6 @@ pub fn delete_login(raw: &mut Value, id: &str) -> bool {
         }
     }
     false
-}
-
-/// `(username, password)` do login pelo id — só leitura, para o botão copiar.
-pub fn login_pair(raw: &Value, id: &str) -> Option<(String, String)> {
-    login_triple(raw, id).map(|(u, p, _)| (u, p))
 }
 
 #[cfg(test)]
@@ -265,14 +260,14 @@ mod tests {
     }
 
     #[test]
-    fn login_pair_devolve_as_credenciais() {
+    fn login_triple_devolve_as_credenciais() {
         let v = vault_com_item();
         let id = v["items"][0]["id"].as_str().unwrap().to_string();
         assert_eq!(
-            login_pair(&v, &id),
-            Some(("joao".into(), "secreta".into()))
+            login_triple(&v, &id),
+            Some(("joao".into(), "secreta".into(), "".into()))
         );
-        assert_eq!(login_pair(&v, "id-que-nao-existe"), None);
+        assert_eq!(login_triple(&v, "id-que-nao-existe"), None);
     }
 
     #[test]

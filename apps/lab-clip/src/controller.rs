@@ -5,11 +5,15 @@
 //! fariam parte do congelamento. Aqui eles vivem fora do ciclo de pintura;
 //! o `update()` só lê o estado compartilhado quando a janela está aberta.
 //!
-//! Comandos chegam de três fontes: atalho global (receiver estático), bandeja
-//! (handlers do tray-icon) e segunda instância (arquivo show.flag). A janela
-//! é mostrada/escondida via winctl (SO direto), nunca via viewport command —
+//! Comandos chegam de: atalho global, bandeja (handlers do tray-icon),
+//! segunda instância (`show.flag`) e automação/testes (`quit.flag` — a
+//! bateria do lab usa pra exercitar o Sair sem clicar no menu). A janela é
+//! mostrada/escondida via winctl (SO direto), nunca via viewport command —
 //! comando de viewport só é processado durante um frame, e frame é exatamente
 //! o que não existe com janela oculta.
+//!
+//! Encerrar é SEMPRE "mostrar + pedir Close pelo update": o winit 0.30 ignora
+//! WM_QUIT externo (ver winctl.rs), então não existe atalho de força bruta.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
@@ -32,23 +36,16 @@ pub struct Shared {
     pub new_items: Vec<Payload>,
     /// true quando o controller mostrou a janela e a UI deve focar a busca.
     pub want_focus: bool,
-    /// Fechar de verdade pedido (bandeja → Sair). A UI, se estiver viva,
-    /// segue o caminho limpo (ViewportCommand::Close); o controller já
-    /// resolveu o caso janela-oculta via WM_QUIT.
+    /// Sair pedido (bandeja → Sair / quit.flag): o update responde com
+    /// `ViewportCommand::Close` — o único caminho que encerra de verdade.
     pub quit: bool,
 }
 
-impl Shared {
-    fn new() -> Self {
-        Self {
-            new_items: Vec::new(),
-            want_focus: false,
-            quit: false,
-        }
-    }
-}
-
 static KEEP_RUNNING: AtomicBool = AtomicBool::new(true);
+
+fn flag_dir() -> std::path::PathBuf {
+    lab_ui::config::config_dir(crate::APP_ID)
+}
 
 /// Sobe o controller. Devolve a ponta da UI (canal da bandeja + estado).
 pub fn spawn(
@@ -56,13 +53,22 @@ pub fn spawn(
     poller_rx: Receiver<ClipItem>,
 ) -> (Sender<TrayCmd>, std::sync::Arc<std::sync::Mutex<Shared>>) {
     let (tx, cmd_rx) = std::sync::mpsc::channel::<TrayCmd>();
-    let shared = std::sync::Arc::new(std::sync::Mutex::new(Shared::new()));
+    let shared = std::sync::Arc::new(std::sync::Mutex::new(Shared {
+        new_items: Vec::new(),
+        want_focus: false,
+        quit: false,
+    }));
     let sh = shared.clone();
-    let show_flag = lab_ui::config::config_dir(crate::APP_ID).join("show.flag");
+
+    // Flag de automação obsoleta (de um boot anterior) não pode matar o app
+    // que acabou de nascer.
+    let _ = std::fs::remove_file(flag_dir().join("quit.flag"));
 
     std::thread::Builder::new()
         .name("clip-controller".into())
         .spawn(move || {
+            let show_flag = flag_dir().join("show.flag");
+            let quit_flag = flag_dir().join("quit.flag");
             loop {
                 if !KEEP_RUNNING.load(Ordering::Relaxed) {
                     break;
@@ -83,10 +89,15 @@ pub fn spawn(
                     cmd = Some(c);
                 }
 
-                // 3) segunda instância pedindo passagem.
+                // 3) segunda instância pedindo passagem / automação pedindo
+                //    saída (mesmos efeitos dos caminhos oficiais).
                 let show_req = show_flag.exists();
                 if show_req {
                     let _ = std::fs::remove_file(&show_flag);
+                }
+                let quit_req = quit_flag.exists();
+                if quit_req {
+                    let _ = std::fs::remove_file(&quit_flag);
                 }
 
                 // 4) poller do clipboard alimenta o buffer compartilhado —
@@ -105,8 +116,8 @@ pub fn spawn(
                     }
                 }
 
-                // 5) aplica comandos no SO (nada de viewport command).
-                if hotkey {
+                // 5) aplica os comandos no SO — nada de viewport command.
+                if hotkey || cmd == Some(TrayCmd::ShowHide) {
                     #[cfg(windows)]
                     if crate::winctl::is_visible() {
                         crate::winctl::hide();
@@ -118,60 +129,43 @@ pub fn spawn(
                     }
                     #[cfg(not(windows))]
                     {
-                        // Sem bandeja no Linux: o atalho só mostra (esconder
-                        // sem bandeja é zumbitar — lá o X fecha de verdade).
-                        let _ = hotkey;
+                        // Sem bandeja no Linux: o atalho só acorda a janela
+                        // (esconder sem bandeja é zumbitar — lá o X fecha).
+                        if let Ok(mut s) = sh.lock() {
+                            s.want_focus = true;
+                        }
                     }
                 }
-                match cmd {
-                    Some(TrayCmd::ShowHide) => {
-                        #[cfg(windows)]
-                        if crate::winctl::is_visible() {
-                            crate::winctl::hide();
-                        } else {
-                            crate::winctl::show();
-                            if let Ok(mut s) = sh.lock() {
-                                s.want_focus = true;
-                            }
-                        }
+
+                let quitting = quit_req || cmd == Some(TrayCmd::Quit);
+                if quitting {
+                    if let Ok(mut s) = sh.lock() {
+                        s.quit = true;
                     }
-                    Some(TrayCmd::Quit) => {
-                        #[cfg(windows)]
-                        {
-                            if crate::winctl::is_visible() {
-                                if let Ok(mut s) = sh.lock() {
-                                    s.quit = true;
-                                }
-                                ctx.request_repaint(); // update segue o caminho limpo
-                            } else {
-                                crate::winctl::force_quit();
-                            }
-                        }
-                        #[cfg(not(windows))]
-                        {
-                            if let Ok(mut s) = sh.lock() {
-                                s.quit = true;
-                            }
-                            ctx.request_repaint();
-                        }
-                    }
-                    None => {}
+                    // Janela VISÍVEL primeiro — o update precisa rodar pra
+                    // encerrar pelo caminho limpo (Close). Mostrar uma janela
+                    // que já está visível é no-op.
+                    #[cfg(windows)]
+                    crate::winctl::show();
                 }
                 if show_req {
                     #[cfg(windows)]
                     crate::winctl::show();
-                    #[cfg(not(windows))]
-                    ctx.request_repaint();
                     if let Ok(mut s) = sh.lock() {
                         s.want_focus = true;
                     }
                 }
 
-                // Mostrou algo / chegou item novo? Pede frame pra UI
-                // sincronizar (visível, o repaint funciona normalmente).
+                // 6) algo mudou e a janela está visível? Pede frame pra UI
+                //    sincronizar (visível, o repaint funciona normalmente).
                 #[cfg(windows)]
-                if (hotkey || cmd.is_some() || show_req || had_new) && crate::winctl::is_visible()
+                if (hotkey || cmd.is_some() || show_req || quit_req || had_new)
+                    && crate::winctl::is_visible()
                 {
+                    ctx.request_repaint();
+                }
+                #[cfg(not(windows))]
+                if hotkey || cmd.is_some() || show_req || quit_req || had_new {
                     ctx.request_repaint();
                 }
 
@@ -181,11 +175,4 @@ pub fn spawn(
         .expect("spawn clip-controller");
 
     (tx, shared)
-}
-
-/// (O controller morre junto com o processo — thread não-main é encerrada
-/// pelo runtime quando `main` retorna; não precisa de stop explícito.)
-#[allow(dead_code)]
-pub fn stop() {
-    KEEP_RUNNING.store(false, Ordering::Relaxed);
 }

@@ -22,7 +22,7 @@ jobs:
       - name: empacotar zips
         shell: pwsh
         run: |
-          $apps = "lab-monitor","lab-calc","lab-clip","lab-keys","lab-hub"
+          $apps = "lab-monitor","lab-calc","lab-clip","lab-keys","lab-hub","lab-image","lab-player"
           New-Item -ItemType Directory -Force -Path out | Out-Null
           foreach ($a in $apps) {
             Compress-Archive -Path "target/release/$a.exe" -DestinationPath "out/$a-windows-x64.zip"
@@ -49,8 +49,8 @@ jobs:
           wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           chmod +x linuxdeploy-x86_64.AppImage
           mkdir -p out
-          declare -A NAMES=( [lab-monitor]="Lab Monitor" [lab-calc]="Lab Calc" [lab-clip]="Lab Clip" [lab-keys]="Lab Keys" [lab-hub]="Lab Hub" )
-          for a in lab-monitor lab-calc lab-clip lab-keys lab-hub; do
+          declare -A NAMES=( [lab-monitor]="Lab Monitor" [lab-calc]="Lab Calc" [lab-clip]="Lab Clip" [lab-keys]="Lab Keys" [lab-hub]="Lab Hub" [lab-image]="Lab Image" [lab-player]="Lab Player" )
+          for a in lab-monitor lab-calc lab-clip lab-keys lab-hub lab-image lab-player; do
             appdir="AppDir-$a"
             mkdir -p "$appdir/usr/bin"
             cp "target/release/$a" "$appdir/usr/bin/"

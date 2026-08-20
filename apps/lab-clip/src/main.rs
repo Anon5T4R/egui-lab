@@ -82,13 +82,10 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(move |cc| {
             theme::apply(&cc.egui_ctx, cfg.theme);
-            #[cfg(windows)]
-            winctl::remember_main_thread();
 
             // Controller: dono do atalho/bandeja/poller (fora do paint).
             let poller_rx = poller::spawn();
-            let (tray_tx, shared) =
-                controller::spawn(cc.egui_ctx.clone(), poller_rx);
+            let (tray_tx, shared) = controller::spawn(cc.egui_ctx.clone(), poller_rx);
             Ok(Box::new(ClipApp::new(cfg, hidden, tray_tx, shared)))
         }),
     )
@@ -126,9 +123,9 @@ impl ClipApp {
         tray_tx: Sender<TrayCmd>,
         shared: Arc<Mutex<Shared>>,
     ) -> Self {
-        // (no Linux a bandeja não existe e o tx fica sem uso — consumido aqui
-        // pra não warnar)
-        let _ = &tray_tx;
+        // (no Linux não há bandeja e o canal fica sem uso)
+        #[cfg(not(windows))]
+        let _ = tray_tx;
 
         // Bandeja: os eventos chegam via set_event_handler → canal do
         // controller (o receiver estático não é mais usado em lugar algum).

@@ -4,27 +4,26 @@
 //! winit: "The window technically has to be visible to receive WM_PAINT"),
 //! então o winit não entrega `RedrawRequested` e o eframe **para de rodar o
 //! app** — todo `update()` morre junto. Um app de bandeja não pode depender
-//! do paint: mostrar/esconder/fechar têm de falar com o SO direto.
+//! do paint: mostrar/esconder têm de falar com o SO direto.
+//!
+//! Nota de por que NÃO há "force_quit" aqui: o winit 0.30 bombeia mensagens
+//! com PeekMessageW/DispatchMessageW e só encerra via `EventLoop::exit()`
+//! (confirmado no fonte) — um `PostThreadMessageW(WM_QUIT)` externo é
+//! ignorado. Encerrar de verdade = mostrar a janela e seguir o caminho limpo
+//! (`ViewportCommand::Close` no update), que o controller faz.
 
 #![cfg(windows)]
 
-use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicIsize, Ordering};
 
-use windows::Win32::Foundation::{BOOL, HWND, LPARAM, WPARAM};
-use windows::Win32::System::Threading::GetCurrentThreadId;
+use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, PostMessageW,
-    PostThreadMessageW, SetForegroundWindow, ShowWindow, SW_HIDE, SW_SHOW, WM_CLOSE, WM_QUIT,
+    EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, SetForegroundWindow,
+    ShowWindow, SW_HIDE, SW_SHOW,
 };
 
 /// HWND da janela egui ("Lab Clip"), descoberto no 1º frame e cacheado.
 static HWND_CACHE: AtomicIsize = AtomicIsize::new(0);
-/// Thread da UI (message loop) — pra postar WM_QUIT de outra thread.
-static MAIN_TID: AtomicU32 = AtomicU32::new(0);
-
-pub fn remember_main_thread() {
-    unsafe { MAIN_TID.store(GetCurrentThreadId(), Ordering::Relaxed) };
-}
 
 struct EnumCtx {
     pid: u32,
@@ -96,30 +95,6 @@ pub fn hide() {
     if let Some(h) = hwnd() {
         unsafe {
             let _ = ShowWindow(h, SW_HIDE);
-        }
-    }
-}
-
-/// Encerra o app de verdade. Com a janela VISÍVEL o caminho limpo é o
-/// `ViewportCommand::Close` (via update); OCULTA o loop não roda — WM_QUIT
-/// direto na thread da UI encerra o winit (eframe salva e sai).
-pub fn force_quit() {
-    let tid = MAIN_TID.load(Ordering::Relaxed);
-    if tid != 0 {
-        unsafe {
-            let _ = PostThreadMessageW(tid, WM_QUIT, WPARAM(0), LPARAM(0));
-        }
-    }
-}
-
-/// Dispara o fechamento pelo caminho normal (WM_CLOSE = clique no X).
-/// (Reservado: o fluxo atual usa ViewportCommand::Close pela UI viva e
-/// force_quit quando oculta — mantido pra futuras rotas.)
-#[allow(dead_code)]
-pub fn request_close() {
-    if let Some(h) = hwnd() {
-        unsafe {
-            let _ = PostMessageW(h, WM_CLOSE, WPARAM(0), LPARAM(0));
         }
     }
 }

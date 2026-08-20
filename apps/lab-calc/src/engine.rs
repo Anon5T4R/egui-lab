@@ -122,6 +122,9 @@ pub struct Ctx {
     pub degrees: bool,
 }
 
+/// Avaliação avulsa com contexto default (usada pelos testes; a UI sempre
+/// passa o contexto com `ans`/DEG-RAD).
+#[cfg(test)]
 pub fn eval(input: &str) -> Result<f64, String> {
     eval_with(input, &Ctx::default())
 }

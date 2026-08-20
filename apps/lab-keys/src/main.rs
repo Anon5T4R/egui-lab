@@ -536,7 +536,7 @@ impl eframe::App for KeysApp {
                 .show(ctx, |ui| {
                     ui.strong(&name);
                     ui.add_space(4.0);
-                    ui.label(egui::RichText::new(format!("{} ({})", t(Key::Delete), t(Key::Lock))).weak());
+                    ui.label(egui::RichText::new(t(Key::TrashHint)).weak());
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         if ui.button(t(Key::Confirm)).clicked() {

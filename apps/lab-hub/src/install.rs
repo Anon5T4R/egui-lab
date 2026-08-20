@@ -24,7 +24,10 @@ pub struct AppDef {
     pub linux_asset: &'static str,
     /// Ícone REAL do irmão Tauri (repo público da suíte).
     pub icon_ico_url: &'static str,
-    /// Ícone PNG (fallback + Linux), 128px do irmão Tauri.
+    /// Ícone PNG 128 (Linux + textura do card; no Windows o atalho usa o
+    /// `.ico`). Só é lido fora do Windows hoje — mantido no catálogo porque
+    /// descreve o par de ícones do app por completo.
+    #[cfg_attr(windows, allow(dead_code))]
     pub icon_png_url: &'static str,
 }
 

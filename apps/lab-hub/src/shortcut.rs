@@ -42,7 +42,7 @@ mod win {
             Where::StartMenu => FOLDERID_Programs,
             Where::Desktop => FOLDERID_Desktop,
         };
-        let mut folder =
+        let folder =
             SHGetKnownFolderPath(&folder_guid, KNOWN_FOLDER_FLAG(0), None)
                 .map_err(|e| format!("pasta do sistema: {e}"))?;
         let dir = PathBuf::from(folder.to_string().map_err(|e| e.to_string())?);
