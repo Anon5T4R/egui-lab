@@ -139,6 +139,9 @@ leitura: o terreno onde o webview ganha com folga.
     (remote mpv IPC via Unix socket/Windows named pipe, playlist com
     resume de posição, teclado ←/→/Espaço). Release `v0.3.1` com 14
     artefatos (7 Windows .zip + 7 Linux .AppImage).
+11. **Onda 11 (feita):** `lab-image` abre com arquivo via "Abrir com" do
+    Windows — `canonicalize` no path, scan da pasta, navega pro índice
+    correto na primeira frame. v0.3.2.
 
 ## Releases
 
