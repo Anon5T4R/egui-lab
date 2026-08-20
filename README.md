@@ -142,6 +142,10 @@ leitura: o terreno onde o webview ganha com folga.
 11. **Onda 11 (feita):** `lab-image` abre com arquivo via "Abrir com" do
     Windows — `canonicalize` no path, scan da pasta, navega pro índice
     correto na primeira frame. v0.3.2.
+12. **Onda 12 (feita):** `lab-player` baixa mpv automaticamente — sem
+    instalação externa. `mpv_setup.rs` checa, baixa (~80 MB portátil do
+    SourceForge) e extrai via 7z. Canal dedicado pro decode do image
+    (fix do bug canal único — Exif sobrescrevia Decode). v0.3.4.
 
 ## Releases
 
