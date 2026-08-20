@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/*", "apps/*"]
 
 [workspace.package]
-version = "0.3.4"
+version = "0.3.5"
 edition = "2021"
 license = "MIT"
 
@@ -30,6 +30,7 @@ image = "0.25"
 # Hub: downloads das releases (ureq = sync+rustls, sem tokio/openssl) e unzip
 ureq = { version = "2.10", default-features = false, features = ["tls", "gzip", "json"] }
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
+sevenz-rust2 = "0.21"
 # Diálogo de arquivo nativo (só Windows; no Linux o caminho é digitado,
 # de propósito — gtk3 no AppImage engordaria dezenas de MB)
 rfd = { version = "0.17", default-features = false }

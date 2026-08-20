@@ -3,14 +3,17 @@
 //! O player é um remote control: spawn `mpv.exe` e controla via IPC.
 //! Para não depender de instalação do sistema, baixamos o mpv portátil
 //! na primeira execução e guardamos em `%LOCALAPPDATA%\LabSuite\mpv\`.
+//!
+//! Extração: `sevenz-rust2` (Rust puro — sem 7z, sem dependência externa).
 
 use std::path::{Path, PathBuf};
 
+use sevenz_rust2::{ArchiveReader, Password};
+
 /// Versão do mpv que baixamos. Atualizar quando necessário.
 /// Fonte: https://sourceforge.net/projects/mpv-player-windows/files/64bit/
-const MPV_VERSION: &str = "2025-03-09";
-const MPV_ARCHIVE_NAME: &str = "mpv-x86_64-2025-03-09-git-0c144a5.7z";
-const MPV_URL: &str = "https://sourceforge.net/projects/mpv-player-windows/files/64bit/mpv-x86_64-2025-03-09-git-0c144a5.7z/download";
+const MPV_ARCHIVE_NAME: &str = "mpv-x86_64-20260809-git-dd5d17d328.7z";
+const MPV_URL: &str = "https://sourceforge.net/projects/mpv-player-windows/files/64bit/mpv-x86_64-20260809-git-dd5d17d328.7z/download";
 
 /// Diretório onde guardamos o mpv portátil.
 fn mpv_dir() -> PathBuf {
@@ -22,7 +25,7 @@ fn mpv_dir() -> PathBuf {
 
 /// Path completo do executável do mpv.
 pub fn mpv_path() -> PathBuf {
-    mpv_dir().join(if cfg!(windows) { "mpv.exe" } else { "mpv" })
+    mpv_dir().join(if cfg!(windows) { "mpv.exe" } else { "mv" })
 }
 
 /// Status do setup do mpv.
@@ -31,8 +34,6 @@ pub enum MpvStatus {
     Ready,
     /// mpv precisa ser baixado. Mensagem descritiva para o UI.
     NeedsDownload(String),
-    /// Erro irrecuperável.
-    Error(String),
 }
 
 /// Verifica se o mpv está disponível. Se não, retorna NeedsDownload.
@@ -42,36 +43,9 @@ pub fn check() -> MpvStatus {
         return MpvStatus::Ready;
     }
 
-    // Verifica se 7z está disponível (necessário pra extrair)
-    let has_7z = std::process::Command::new("7z")
-        .arg("--help")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok()
-        || std::process::Command::new("7zz")
-            .arg("--help")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok()
-        || std::process::Command::new("7za")
-            .arg("--help")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok();
-
-    if !has_7z {
-        return MpvStatus::Error(
-            "7-Zip não encontrado. Instale: winget install 7zip.7zip".into(),
-        );
-    }
-
-    MpvStatus::NeedsDownload(format!(
-        "mpv não encontrado em {}. Será baixado automaticamente (~80 MB).",
-        path.display()
-    ))
+    MpvStatus::NeedsDownload(
+        "mpv não encontrado. Será baixado automaticamente (~80 MB).".into(),
+    )
 }
 
 /// Baixa e extrai o mpv portátil. Bloqueante — chamar em thread separada.
@@ -83,23 +57,22 @@ pub fn download() -> Result<PathBuf, String> {
     let archive_path = dir.join(MPV_ARCHIVE_NAME);
 
     // 1) Baixa o .7z
-    eprintln!("[lab-player] baixando mpv {MPV_VERSION}...");
+    eprintln!("[lab-player] baixando mpv...");
     download_file(MPV_URL, &archive_path)?;
 
-    // 2) Extrai com 7z (portátil) ou powershell
+    // 2) Extrai com sevenz-rust2 (Rust puro)
     eprintln!("[lab-player] extraindo...");
     extract_7z(&archive_path, &dir)?;
 
-    // 3) Move o mpv.exe da subpasta pra raiz (o zip tem uma pasta interna)
+    // 3) Procura o mpv.exe na árvore extraída
     let exe = find_mpv_exe(&dir)?;
     let target = mpv_path();
     if exe != target {
         std::fs::copy(&exe, &target).map_err(|e| format!("copiar mpv.exe: {e}"))?;
     }
 
-    // 4) Limpa o archive e a pasta temporária
+    // 4) Limpa o archive
     let _ = std::fs::remove_file(&archive_path);
-    let _ = std::fs::remove_dir_all(dir.join("mpv"));
 
     eprintln!("[lab-player] mpv pronto: {}", target.display());
     Ok(target)
@@ -120,47 +93,56 @@ fn download_file(url: &str, dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Extrai um .7z usando powershell (Expand-Archive não suporta 7z).
-/// Fallback: tenta 7z se disponível, senão erro.
+/// Extrai um .7z usando sevenz-rust2 (Rust puro).
 fn extract_7z(archive: &Path, dest: &Path) -> Result<(), String> {
-    // Tenta 7z se disponível
-    if let Ok(status) = std::process::Command::new("7z")
-        .args(["x", archive.to_str().unwrap(), &format!("-o{}", dest.display()), "-y"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-    {
-        if status.success() {
-            return Ok(());
-        }
-    }
+    let file = std::fs::File::open(archive).map_err(|e| format!("abrir archive: {e}"))?;
 
-    // Tenta 7zz (versão unificada do p7zip)
-    if let Ok(status) = std::process::Command::new("7zz")
-        .args(["x", archive.to_str().unwrap(), &format!("-o{}", dest.display()), "-y"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-    {
-        if status.success() {
-            return Ok(());
-        }
-    }
+    let mut reader = ArchiveReader::new(file, Password::empty())
+        .map_err(|e| format!("abrir 7z: {e}"))?;
 
-    // Tenta 7za (popular no Windows via scoop/choco)
-    if let Ok(status) = std::process::Command::new("7za")
-        .args(["x", archive.to_str().unwrap(), &format!("-o{}", dest.display()), "-y"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-    {
-        if status.success() {
-            return Ok(());
-        }
-    }
+    // 7z costuma ser sólido: for_each_entries decodifica em sequência.
+    reader
+        .for_each_entries(|entry, rd| {
+            let name = entry.name.clone();
+            let is_dir = entry.is_directory;
 
-    // Nenhum 7z disponível — tenta instalar via winget/scoop como fallback
-    Err("7z não encontrado. Instale 7-Zip (winget install 7zip.7zip) ou baixe o mpv manualmente.".into())
+            if name.is_empty() {
+                return Ok(true);
+            }
+
+            let target = dest.join(&name);
+
+            if is_dir {
+                let _ = std::fs::create_dir_all(&target);
+                return Ok(true);
+            }
+
+            if let Some(parent) = target.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+
+            let mut out = match std::fs::File::create(&target) {
+                Ok(f) => f,
+                Err(_) => return Ok(true), // pula arquivos que não consegue criar
+            };
+
+            let mut buf = vec![0u8; 512 * 1024];
+            loop {
+                let n = match rd.read(&mut buf) {
+                    Ok(n) => n,
+                    Err(_) => break,
+                };
+                if n == 0 {
+                    break;
+                }
+                let _ = std::io::Write::write_all(&mut out, &buf[..n]);
+            }
+
+            Ok(true)
+        })
+        .map_err(|e| format!("extrair 7z: {e}"))?;
+
+    Ok(())
 }
 
 /// Procura o mpv.exe na árvore extraída.

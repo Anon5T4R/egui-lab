@@ -60,8 +60,7 @@ impl PlayerApp {
         let (cmd_tx, ev_rx) = mpv::spawn();
 
         // Checa se o mpv está disponível. Se não, dispara download em background.
-        let mpv_status = mpv_setup::check();
-        let (mpv_check, status_msg) = match mpv_status {
+        let (mpv_check, status_msg) = match mpv_setup::check() {
             mpv_setup::MpvStatus::Ready => (None, String::new()),
             mpv_setup::MpvStatus::NeedsDownload(msg) => {
                 let (tx, rx) = std::sync::mpsc::channel();
@@ -70,10 +69,6 @@ impl PlayerApp {
                 });
                 eprintln!("[lab-player] {msg}");
                 (Some(rx), "baixando mpv...".into())
-            }
-            mpv_setup::MpvStatus::Error(e) => {
-                eprintln!("[lab-player] {e}");
-                (None, format!("⚠ {e}"))
             }
         };
 

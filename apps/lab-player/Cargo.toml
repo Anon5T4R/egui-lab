@@ -11,6 +11,7 @@ lab-ui = { path = "../../crates/lab-ui" }
 serde.workspace = true
 serde_json.workspace = true
 ureq.workspace = true
+sevenz-rust2.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 # IPC com o mpv via named pipe (o desenho provado do LocalPlayer oficial:
