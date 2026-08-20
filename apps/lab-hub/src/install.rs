@@ -64,6 +64,22 @@ pub const APPS: &[AppDef] = &[
         icon_ico_url: "https://raw.githubusercontent.com/Anon5T4R/LocalKeys/main/src-tauri/icons/icon.ico",
         icon_png_url: "https://raw.githubusercontent.com/Anon5T4R/LocalKeys/main/src-tauri/icons/128x128.png",
     },
+    AppDef {
+        id: "lab-image",
+        display: "Lab Image",
+        win_asset: "lab-image-windows-x64.zip",
+        linux_asset: "Lab_Image-x86_64.AppImage",
+        icon_ico_url: "https://raw.githubusercontent.com/Anon5T4R/LocalImage/main/src-tauri/icons/icon.ico",
+        icon_png_url: "https://raw.githubusercontent.com/Anon5T4R/LocalImage/main/src-tauri/icons/128x128.png",
+    },
+    AppDef {
+        id: "lab-player",
+        display: "Lab Player",
+        win_asset: "lab-player-windows-x64.zip",
+        linux_asset: "Lab_Player-x86_64.AppImage",
+        icon_ico_url: "https://raw.githubusercontent.com/Anon5T4R/LocalPlayer/main/src-tauri/icons/icon.ico",
+        icon_png_url: "https://raw.githubusercontent.com/Anon5T4R/LocalPlayer/main/src-tauri/icons/128x128.png",
+    },
 ];
 
 pub const REPO: &str = "Anon5T4R/egui-lab";
