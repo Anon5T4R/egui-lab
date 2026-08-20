@@ -19,8 +19,25 @@ use mpv::{Cmd, Event};
 
 const APP_ID: &str = "lab-player";
 
+/// Extensões aceitas na playlist (o filtro do diálogo, do drag-drop e dos args).
+const MEDIA_EXTS: &[&str] = &[
+    "mp4", "mkv", "webm", "mov", "avi", "m4v", "wmv", "mp3", "flac", "ogg", "wav", "m4a",
+    "opus",
+];
+
+fn is_media(p: &std::path::Path) -> bool {
+    p.extension()
+        .and_then(|x| x.to_str())
+        .map(|x| MEDIA_EXTS.contains(&x.to_ascii_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
 fn main() -> eframe::Result<()> {
     let cfg = config::load(APP_ID);
+
+    // "Abrir com" do Windows manda os caminhos como args (pode ser mais de um).
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Lab Player")
@@ -32,7 +49,7 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(move |cc| {
             theme::apply(&cc.egui_ctx, cfg.theme);
-            Ok(Box::new(PlayerApp::new(cfg)))
+            Ok(Box::new(PlayerApp::new(cfg, args)))
         }),
     )
 }
@@ -53,11 +70,35 @@ struct PlayerApp {
     status: String,
     /// Setup do mpv: download em background se necessário.
     mpv_check: Option<std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>>,
+    /// Índice a tocar assim que o mpv estiver pronto (veio de args).
+    initial_play: Option<usize>,
 }
 
 impl PlayerApp {
-    fn new(cfg: Config) -> Self {
+    fn new(cfg: Config, args: Vec<String>) -> Self {
         let (cmd_tx, ev_rx) = mpv::spawn();
+
+        // "Abrir com": adiciona os arquivos de args na playlist e marca o
+        // primeiro pra tocar assim que o mpv estiver disponível (pode estar
+        // baixando ainda).
+        let mut playlist = resume::load_playlist();
+        let mut first_arg: Option<String> = None;
+        for a in &args {
+            if !is_media(std::path::Path::new(a)) {
+                continue;
+            }
+            if !playlist.files.contains(a) {
+                playlist.files.push(a.clone());
+            }
+            if first_arg.is_none() {
+                first_arg = Some(a.clone());
+            }
+        }
+        let initial_play = first_arg
+            .and_then(|f| playlist.files.iter().position(|x| *x == f));
+        if initial_play.is_some() {
+            resume::save_playlist(&playlist);
+        }
 
         // Checa se o mpv está disponível. Se não, dispara download em background.
         let (mpv_check, status_msg) = match mpv_setup::check() {
@@ -76,7 +117,7 @@ impl PlayerApp {
             cfg,
             cmd_tx,
             ev_rx,
-            playlist: resume::load_playlist(),
+            playlist,
             idx: None,
             now: String::new(),
             time: 0.0,
@@ -86,6 +127,7 @@ impl PlayerApp {
             resume: resume::load(),
             status: status_msg,
             mpv_check,
+            initial_play,
         }
     }
 
@@ -155,6 +197,39 @@ impl eframe::App for PlayerApp {
             } else {
                 // Ainda baixando — pede repaint e mostra spinner.
                 ctx.request_repaint_after(std::time::Duration::from_millis(200));
+            }
+        }
+
+        // "Abrir com": toca o arquivo dos args assim que o mpv estiver
+        // disponível (imediatamente se já estava pronto, ou quando o
+        // download terminar).
+        if let Some(i) = self.initial_play {
+            if self.mpv_ready() {
+                self.play(i);
+                self.initial_play = None;
+            } else {
+                ctx.request_repaint_after(std::time::Duration::from_millis(200));
+            }
+        }
+
+        // Drag & drop de arquivos (o placeholder promete; aqui entrega).
+        let dropped: Vec<String> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .filter_map(|d| d.path.clone().map(|p| p.display().to_string()))
+                .collect()
+        });
+        if !dropped.is_empty() {
+            let mut added = false;
+            for f in dropped {
+                if is_media(std::path::Path::new(&f)) && !self.playlist.files.contains(&f) {
+                    self.playlist.files.push(f);
+                    added = true;
+                }
+            }
+            if added {
+                resume::save_playlist(&self.playlist);
             }
         }
 
@@ -381,20 +456,10 @@ fn pick_dir() -> Option<String> {
 }
 
 fn list_media(dir: &str) -> Result<Vec<String>, String> {
-    const EXTS: &[&str] = &[
-        "mp4", "mkv", "webm", "mov", "avi", "m4v", "wmv", "mp3", "flac", "ogg", "wav", "m4a",
-        "opus",
-    ];
     let mut files: Vec<String> = std::fs::read_dir(dir)
         .map_err(|e| e.to_string())?
         .flatten()
-        .filter(|e| {
-            e.path()
-                .extension()
-                .and_then(|x| x.to_str())
-                .map(|x| EXTS.contains(&x.to_ascii_lowercase().as_str()))
-                .unwrap_or(false)
-        })
+        .filter(|e| is_media(&e.path()))
         .map(|e| e.path().display().to_string())
         .collect();
     files.sort_by_key(|f| f.to_lowercase());

@@ -220,12 +220,18 @@ fn engine(cmd_rx: Receiver<Cmd>, ev_tx: Sender<Event>) {
         }
 
         // 4) espera: com IPC viva o tick é rápido (a seek bar depende dos
-        //    eventos); parado, dorme mais.
-        let _ = cmd_rx.recv_timeout(if ipc.is_some() {
+        //    eventos); parado, dorme mais. O comando que chega DURANTE o
+        //    sono é aplicado direto — se cair no `let _`, é engolido e
+        //    perdido (o drena do próximo giro vê o canal já vazio).
+        match cmd_rx.recv_timeout(if ipc.is_some() {
             Duration::from_millis(80)
         } else {
             Duration::from_millis(300)
-        });
+        }) {
+            Ok(cmd) => apply(&cmd, &mut child, &mut ipc, &ev_tx),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        }
     }
 }
 
