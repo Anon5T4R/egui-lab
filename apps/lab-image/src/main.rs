@@ -105,7 +105,10 @@ struct ImageApp {
     /// trocou de textura (sem cache infinito: RAM manda).
     tex: Option<(PathBuf, egui::TextureHandle)>,
     exif: Option<Vec<(String, String)>>,
+    /// Canal geral: List / Exif / Export.
     rx: Option<Receiver<Done>>,
+    /// Canal dedicado do Decode — não pode ser sobrescrito pelo Exif.
+    decode_rx: Option<Receiver<Done>>,
     status: String,
     // viewport do zoom
     zoom: f32,
@@ -127,6 +130,7 @@ impl ImageApp {
             tex: None,
             exif: None,
             rx: None,
+            decode_rx: None,
             status: String::new(),
             zoom: 1.0,
             pan: egui::Vec2::ZERO,
@@ -136,12 +140,18 @@ impl ImageApp {
         }
     }
 
+    /// Enfileira um job nos canais genéricos (List / Exif / Export).
     fn request(&mut self, job: Job) {
-        // Uma job por vez: a última pedida é a que importa (navegação rápida
-        // não acumula decodes obsoletos).
         let (tx, rx) = std::sync::mpsc::channel();
         spawn_job(job, tx);
         self.rx = Some(rx);
+    }
+
+    /// Enfileira um decode — canal dedicado para não ser sobrescrito.
+    fn request_decode(&mut self, job: Job) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        spawn_job(job, tx);
+        self.decode_rx = Some(rx);
     }
 
     fn current(&self) -> Option<&PathBuf> {
@@ -156,7 +166,7 @@ impl ImageApp {
             self.fit = true;
             if let Some(p) = self.current() {
                 let p = p.clone();
-                self.request(Job::Decode(p.clone()));
+                self.request_decode(Job::Decode(p.clone()));
                 self.request(Job::Exif(p));
             }
         }
@@ -191,45 +201,52 @@ impl eframe::App for ImageApp {
                         }
                     }
                     Done::List(Err(e)) => self.status = format!("⚠ {e}"),
-                    Done::Decode { path, result } => {
-                        match result {
-                            Ok((image, info)) => {
-                                if let Some(i) = info {
-                                    self.status = format!(
-                                        "{}×{} · {:.1} MB",
-                                        i.width,
-                                        i.height,
-                                        i.size_bytes as f64 / 1e6
-                                    );
-                                }
-                                let tex = ctx.load_texture(
-                                    "view",
-                                    image,
-                                    egui::TextureOptions::default(),
-                                );
-                                self.tex = Some((path, tex));
-                            }
-                            Err(e) => self.status = format!("⚠ {e}"),
-                        }
-                    }
                     Done::Exif(entries) => self.exif = Some(entries),
                     Done::Export(Ok(dst)) => {
                         self.status = format!("✓ {}", dst.display());
                     }
                     Done::Export(Err(e)) => self.status = format!("⚠ {e}"),
+                    _ => {}
                 }
             }
             if matches!(rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Disconnected)) {
                 self.rx = None;
             }
         }
+        // Canal dedicado do decode (não compartilhado com Exif).
+        if let Some(rx) = &self.decode_rx {
+            while let Ok(done) = rx.try_recv() {
+                if let Done::Decode { path, result } = done {
+                    match result {
+                        Ok((image, info)) => {
+                            if let Some(i) = info {
+                                self.status = format!(
+                                    "{}×{} · {:.1} MB",
+                                    i.width,
+                                    i.height,
+                                    i.size_bytes as f64 / 1e6
+                                );
+                            }
+                            let tex = ctx.load_texture(
+                                "view",
+                                image,
+                                egui::TextureOptions::default(),
+                            );
+                            self.tex = Some((path, tex));
+                        }
+                        Err(e) => self.status = format!("⚠ {e}"),
+                    }
+                }
+            }
+            if matches!(rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Disconnected)) {
+                self.decode_rx = None;
+            }
+        }
         if open_first {
             if let Some(ref target) = self.initial_file {
-                // Encontra o índice do arquivo passado via args.
                 if let Some(i) = self.files.iter().position(|f| f == target) {
                     self.goto(i);
                 } else {
-                    // Arquivo não existe na pasta; abre o primeiro mesmo assim.
                     self.goto(0);
                 }
             } else {
