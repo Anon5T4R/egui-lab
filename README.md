@@ -146,6 +146,8 @@ leitura: o terreno onde o webview ganha com folga.
     instalação externa. `mpv_setup.rs` checa, baixa (~80 MB portátil do
     SourceForge) e extrai via 7z. Canal dedicado pro decode do image
     (fix do bug canal único — Exif sobrescrevia Decode). v0.3.4.
+13. **Onda 13 (feita):** `lab-player` extrai mpv via `sevenz-rust2` (Rust
+    puro — sem 7z externo). URL corrigida pro build 20260809. v0.3.5.
 
 ## Releases
 
