@@ -127,6 +127,18 @@ leitura: o terreno onde o webview ganha com folga.
    Validado por bateria automatizada: X esconde (processo vivo), hotkey
    acorda janela oculta, toggle completo, segunda instância acorda a
    primeira — sem panics.
+10. **Onda 10 (feita — fix quit oculto + image + player):** a v0.2.5
+    tinha o clip quebrando ao fechar via bandeja no Windows: **WM_QUIT
+    é ignorado pelo winit 0.30** — a janela ficava presa. A solução é
+    rota única: mostrar a janela com `ShowWindow` + `ViewportCommand::Close`
+    (nunca mais `PostMessageW(WM_QUIT)`). Limpeza de código morto: i18n
+    `Network`, `TrashHint` do delete dialog do keys, `login_pair`/`Network`
+    do vault, e os 5 testes `eval` que dependiam de features do oficial.
+    Novos clones: **lab-image** (viewer com EXIF panel, zoom/pan, resize
+    interativo, export girado sem EXIF — tudo via threads) e **lab-player**
+    (remote mpv IPC via Unix socket/Windows named pipe, playlist com
+    resume de posição, teclado ←/→/Espaço). Release `v0.3.1` com 14
+    artefatos (7 Windows .zip + 7 Linux .AppImage).
 
 ## Releases
 
