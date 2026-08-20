@@ -22,6 +22,14 @@ const APP_ID: &str = "lab-image";
 
 fn main() -> eframe::Result<()> {
     let cfg = config::load(APP_ID);
+
+    // "Abrir com" do Windows manda o caminho como primeiro arg.
+    // canonicalize garante que o path bate com o que read_dir retorna.
+    let initial_file = std::env::args()
+        .nth(1)
+        .map(PathBuf::from)
+        .and_then(|p| p.canonicalize().ok());
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Lab Image")
@@ -33,7 +41,7 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(move |cc| {
             theme::apply(&cc.egui_ctx, cfg.theme);
-            Ok(Box::new(ImageApp::new(cfg)))
+            Ok(Box::new(ImageApp::new(cfg, initial_file)))
         }),
     )
 }
@@ -104,10 +112,13 @@ struct ImageApp {
     pan: egui::Vec2,
     fit: bool,
     show_exif: bool,
+    /// Se o app foi aberto com um arquivo via args, guardamos o path até
+    /// a lista da pasta estar pronta (decode é async via channel).
+    initial_file: Option<PathBuf>,
 }
 
 impl ImageApp {
-    fn new(cfg: Config) -> Self {
+    fn new(cfg: Config, initial_file: Option<PathBuf>) -> Self {
         Self {
             cfg,
             dir: String::new(),
@@ -121,6 +132,7 @@ impl ImageApp {
             pan: egui::Vec2::ZERO,
             fit: true,
             show_exif: false,
+            initial_file,
         }
     }
 
@@ -153,6 +165,19 @@ impl ImageApp {
 
 impl eframe::App for ImageApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Se abriu com um arquivo via args, dispara o scan da pasta agora.
+        if let Some(ref p) = self.initial_file {
+            if self.dir.is_empty() {
+                if let Some(parent) = p.parent() {
+                    let dir = parent.to_string_lossy().to_string();
+                    self.dir = dir.clone();
+                    self.request(Job::List(dir));
+                    ctx.request_repaint();
+                    return;
+                }
+            }
+        }
+
         // Drena resultados das threads; `goto(0)` fica fora do borrow.
         let mut open_first = false;
         if let Some(rx) = &self.rx {
@@ -199,7 +224,18 @@ impl eframe::App for ImageApp {
             }
         }
         if open_first {
-            self.goto(0);
+            if let Some(ref target) = self.initial_file {
+                // Encontra o índice do arquivo passado via args.
+                if let Some(i) = self.files.iter().position(|f| f == target) {
+                    self.goto(i);
+                } else {
+                    // Arquivo não existe na pasta; abre o primeiro mesmo assim.
+                    self.goto(0);
+                }
+            } else {
+                self.goto(0);
+            }
+            self.initial_file = None;
         }
         if self.rx.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(150));
