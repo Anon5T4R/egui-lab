@@ -31,10 +31,13 @@ use std::time::Duration;
 #[derive(Clone, Debug)]
 pub enum Cmd {
     /// Abre arquivo (resume em segundos, se houver) com volume inicial.
+    /// `wid` = HWND do child pra embutir o vídeo na janela do player
+    /// (None = janela própria do mpv — Linux / fallback).
     Open {
         path: String,
         resume: Option<f64>,
         volume: f64,
+        wid: Option<isize>,
     },
     Pause,
     Unpause,
@@ -242,7 +245,7 @@ fn apply(cmd: &Cmd, child: &mut Option<Child>, ipc: &mut Option<Ipc>, ev_tx: &Se
         }
     };
     match cmd {
-        Cmd::Open { path, resume, volume } => {
+        Cmd::Open { path, resume, volume, wid } => {
             kill(child, ipc);
             let addr = ipc_addr();
             if !cfg!(windows) {
@@ -251,9 +254,15 @@ fn apply(cmd: &Cmd, child: &mut Option<Child>, ipc: &mut Option<Ipc>, ev_tx: &Se
             let mut args: Vec<String> = vec![
                 format!("--input-ipc-server={addr}"),
                 format!("--volume={volume}"),
-                "--force-window=yes".into(),
                 "--keep-open=always".into(),
             ];
+            // Windows: vídeo DENTRO da janela do player (child + --wid);
+            // o DWM compõe o child acima da superfície GL do eframe.
+            // Sem wid (Linux/erro): janela própria do mpv.
+            match wid {
+                Some(w) => args.push(format!("--wid={w}")),
+                None => args.push("--force-window=yes".into()),
+            }
             if let Some(t) = resume.filter(|t| *t > 5.0) {
                 args.push(format!("--start={t}"));
             }

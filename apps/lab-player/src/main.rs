@@ -5,6 +5,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod embed;
 mod mpv;
 mod mpv_setup;
 mod resume;
@@ -72,6 +73,8 @@ struct PlayerApp {
     mpv_check: Option<std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>>,
     /// Índice a tocar assim que o mpv estiver pronto (veio de args).
     initial_play: Option<usize>,
+    /// Child window que recebe o vídeo (`--wid`). Windows-only.
+    embed: Option<embed::VideoEmbed>,
 }
 
 impl PlayerApp {
@@ -128,6 +131,7 @@ impl PlayerApp {
             status: status_msg,
             mpv_check,
             initial_play,
+            embed: None,
         }
     }
 
@@ -136,10 +140,12 @@ impl PlayerApp {
             return;
         };
         let r = resume::position_of(&self.resume, &path);
+        let wid = self.embed.as_ref().map(|e| e.child_hwnd());
         let _ = self.cmd_tx.send(Cmd::Open {
             path,
             resume: r,
             volume: self.volume,
+            wid,
         });
         self.idx = Some(i);
         self.now = self
@@ -198,6 +204,12 @@ impl eframe::App for PlayerApp {
                 // Ainda baixando — pede repaint e mostra spinner.
                 ctx.request_repaint_after(std::time::Duration::from_millis(200));
             }
+        }
+
+        // Garante o child de vídeo (janela já existe no primeiro update;
+        // se o FindWindow ainda não achou, tenta de novo no próximo frame).
+        if self.embed.is_none() {
+            self.embed = embed::VideoEmbed::new("Lab Player");
         }
 
         // "Abrir com": toca o arquivo dos args assim que o mpv estiver
@@ -365,17 +377,42 @@ impl eframe::App for PlayerApp {
             }
         });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let t = i18n::t(self.cfg.lang, Key::Items);
-            ui.strong(t);
-            ui.add_space(4.0);
-
-            if self.playlist.files.is_empty() {
-                ui.label(
-                    egui::RichText::new("arraste arquivos aqui ou use + abaixo")
-                        .weak(),
-                );
-            } else {
+        // Playlist: painel inferior fixo entre os controles e o vídeo.
+        egui::TopBottomPanel::bottom("playlist")
+            .exact_height(140.0)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let t = i18n::t(self.cfg.lang, Key::Items);
+                    ui.strong(t);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("+ arquivo").clicked() {
+                            if let Some(p) = pick_media() {
+                                self.playlist.files.push(p);
+                                resume::save_playlist(&self.playlist);
+                            }
+                        }
+                        if ui.button("+ pasta").clicked() {
+                            if let Some(dir) = pick_dir() {
+                                if let Ok(files) = list_media(&dir) {
+                                    self.playlist.files.extend(files);
+                                    resume::save_playlist(&self.playlist);
+                                }
+                            }
+                        }
+                        if ui
+                            .add_enabled(
+                                !self.playlist.files.is_empty(),
+                                egui::Button::new(i18n::t(self.cfg.lang, Key::Clear)),
+                            )
+                            .clicked()
+                        {
+                            self.playlist.files.clear();
+                            self.idx = None;
+                            resume::save_playlist(&self.playlist);
+                        }
+                    });
+                });
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     for (i, f) in self.playlist.files.clone().iter().enumerate() {
                         let name = std::path::Path::new(f)
@@ -392,38 +429,37 @@ impl eframe::App for PlayerApp {
                         }
                     }
                 });
-            }
-
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                ui.horizontal(|ui| {
-                    if ui.button("+ arquivo").clicked() {
-                        if let Some(p) = pick_media() {
-                            self.playlist.files.push(p);
-                            resume::save_playlist(&self.playlist);
-                        }
-                    }
-                    if ui.button("+ pasta").clicked() {
-                        if let Some(dir) = pick_dir() {
-                            if let Ok(files) = list_media(&dir) {
-                                self.playlist.files.extend(files);
-                                resume::save_playlist(&self.playlist);
-                            }
-                        }
-                    }
-                    if ui
-                        .add_enabled(
-                            !self.playlist.files.is_empty(),
-                            egui::Button::new(i18n::t(self.cfg.lang, Key::Clear)),
-                        )
-                        .clicked()
-                    {
-                        self.playlist.files.clear();
-                        self.idx = None;
-                        resume::save_playlist(&self.playlist);
-                    }
-                });
             });
+
+        // Vídeo: painel central. O mpv desenha no child window posicionado
+        // sobre este retângulo (DWM compõe acima da superfície GL).
+        let ppp = ctx.pixels_per_point();
+        let mut video_rect = egui::Rect::NOTHING;
+        egui::CentralPanel::default().show(ctx, |ui| {
+            video_rect = ui.max_rect();
+            if self.idx.is_none() {
+                ui.centered_and_justified(|ui| {
+                    ui.label(
+                        egui::RichText::new("arraste mídia aqui ou selecione na playlist")
+                            .weak(),
+                    );
+                });
+            }
         });
+
+        // Reposiciona o child do vídeo a cada frame (barato; resize/dpi
+        // saem de graça) e alterna a visibilidade com o estado do play.
+        if let Some(e) = &self.embed {
+            let min = video_rect.min * ppp;
+            let size = video_rect.size() * ppp;
+            e.place(
+                min.x.round() as i32,
+                min.y.round() as i32,
+                size.x.round() as i32,
+                size.y.round() as i32,
+            );
+            e.set_visible(self.idx.is_some() && self.mpv_ready());
+        }
     }
 }
 
