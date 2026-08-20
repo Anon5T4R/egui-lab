@@ -148,6 +148,18 @@ leitura: o terreno onde o webview ganha com folga.
     (fix do bug canal único — Exif sobrescrevia Decode). v0.3.4.
 13. **Onda 13 (feita):** `lab-player` extrai mpv via `sevenz-rust2` (Rust
     puro — sem 7z externo). URL corrigida pro build 20260809. v0.3.5.
+14. **Onda 14 (feita — o player toca):** TRÊS bugs encadeados do player:
+    **(a)** race no engine — `recv_timeout` do sono engolia o `Cmd::Open`
+    (`let _ =` descartava; drena do giro seguinte via canal vazio). Agora
+    o que chega no sono é aplicado direto. **(b)** "Abrir com" ignorado —
+    args agora entram na playlist com auto-play quando o mpv fica pronto
+    (mesmo mid-download); drag-drop de verdade implementado. **(c)** vídeo
+    em janela separada — agora **embutido na própria janela**: child Win32
+    (`STATIC`) criado sobre o painel central + `--wid=<hwnd>` do mpv; o
+    DWM compõe o child acima da superfície GL do eframe; reposicionado
+    por frame (resize/DPI de graça). Playlist virou painel inferior fixo
+    (140px) entre controles e vídeo. Linux mantém janela própria do mpv.
+    v0.3.6.
 
 ## Releases
 
