@@ -6,6 +6,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod mpv;
+mod mpv_setup;
 mod resume;
 
 use std::sync::mpsc::{Receiver, Sender};
@@ -50,11 +51,32 @@ struct PlayerApp {
     volume: f64,
     resume: resume::Resume,
     status: String,
+    /// Setup do mpv: download em background se necessário.
+    mpv_check: Option<std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>>,
 }
 
 impl PlayerApp {
     fn new(cfg: Config) -> Self {
         let (cmd_tx, ev_rx) = mpv::spawn();
+
+        // Checa se o mpv está disponível. Se não, dispara download em background.
+        let mpv_status = mpv_setup::check();
+        let (mpv_check, status_msg) = match mpv_status {
+            mpv_setup::MpvStatus::Ready => (None, String::new()),
+            mpv_setup::MpvStatus::NeedsDownload(msg) => {
+                let (tx, rx) = std::sync::mpsc::channel();
+                std::thread::spawn(move || {
+                    let _ = tx.send(mpv_setup::download());
+                });
+                eprintln!("[lab-player] {msg}");
+                (Some(rx), "baixando mpv...".into())
+            }
+            mpv_setup::MpvStatus::Error(e) => {
+                eprintln!("[lab-player] {e}");
+                (None, format!("⚠ {e}"))
+            }
+        };
+
         Self {
             cfg,
             cmd_tx,
@@ -67,7 +89,8 @@ impl PlayerApp {
             paused: false,
             volume: 100.0,
             resume: resume::load(),
-            status: String::new(),
+            status: status_msg,
+            mpv_check,
         }
     }
 
@@ -102,6 +125,10 @@ impl PlayerApp {
             }
         }
     }
+
+    fn mpv_ready(&self) -> bool {
+        self.mpv_check.is_none()
+    }
 }
 
 fn fmt_time(s: f64) -> String {
@@ -119,6 +146,23 @@ fn fmt_time(s: f64) -> String {
 
 impl eframe::App for PlayerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Checa se o download do mpv terminou.
+        if let Some(rx) = &self.mpv_check {
+            if let Ok(result) = rx.try_recv() {
+                match result {
+                    Ok(_path) => {
+                        self.status.clear();
+                        eprintln!("[lab-player] mpv pronto");
+                    }
+                    Err(e) => self.status = format!("⚠ mpv: {e}"),
+                }
+                self.mpv_check = None;
+            } else {
+                // Ainda baixando — pede repaint e mostra spinner.
+                ctx.request_repaint_after(std::time::Duration::from_millis(200));
+            }
+        }
+
         // Eventos do motor.
         let mut ended = false;
         while let Ok(ev) = self.ev_rx.try_recv() {
@@ -194,7 +238,7 @@ impl eframe::App for PlayerApp {
 
         egui::TopBottomPanel::bottom("controles").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                let playing = self.idx.is_some();
+                let playing = self.idx.is_some() && self.mpv_ready();
                 let label = if self.paused { "▶" } else { "⏸" };
                 if ui
                     .add_enabled(playing, egui::Button::new(label))
@@ -232,7 +276,7 @@ impl eframe::App for PlayerApp {
                 });
             });
             // Seek bar.
-            let playing = self.idx.is_some();
+            let playing = self.idx.is_some() && self.mpv_ready();
             let mut t = self.time;
             let slider = ui.add_enabled(
                 playing,
@@ -245,6 +289,9 @@ impl eframe::App for PlayerApp {
             }
             if !self.status.is_empty() {
                 ui.label(egui::RichText::new(&self.status).small().weak());
+            }
+            if self.mpv_check.is_some() {
+                ui.spinner();
             }
         });
 
@@ -269,6 +316,7 @@ impl eframe::App for PlayerApp {
                         if ui
                             .selectable_label(is_now, &name)
                             .clicked()
+                            && self.mpv_ready()
                         {
                             self.play(i);
                         }

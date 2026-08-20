@@ -312,12 +312,10 @@ fn kill(child: &mut Option<Child>, ipc: &mut Option<Ipc>) {
 
 /// Windows: `mpv.exe` (PATH ou ao lado do exe — o oficial embute do espelho
 /// Local-runtimes; no lab basta estar no PATH). Linux: `mpv` do PATH.
-fn mpv_bin() -> &'static str {
-    if cfg!(windows) {
-        "mpv.exe"
-    } else {
-        "mpv"
-    }
+fn mpv_bin() -> String {
+    super::mpv_setup::mpv_path()
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn parse_event(line: &str) -> Option<Event> {
