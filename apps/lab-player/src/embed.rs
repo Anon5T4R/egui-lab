@@ -186,6 +186,7 @@ mod imp {
 
     use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
     use x11rb::connection::Connection as _;
+    use x11rb::protocol::xproto::ConnectionExt as _;
     use x11rb::protocol::xproto::{ConfigureWindowAux, CreateWindowAux, EventMask, WindowClass};
     use x11rb::rust_connection::RustConnection;
 
@@ -205,15 +206,14 @@ mod imp {
             let raw = frame.window_handle().ok()?.as_raw();
             let parent = match raw {
                 RawWindowHandle::Xlib(h) => h.window as u32,
-                RawWindowHandle::Xcb(h) => h.window,
+                RawWindowHandle::Xcb(h) => h.window as u32,
                 _ => return None,
             };
 
-            let (conn, screen_num) = x11rb::connect(None).ok()?;
-            let screen = conn.setup().roots.get(screen_num)?;
+            let (conn, _screen_num) = x11rb::connect(None).ok()?;
             let child = conn.generate_id().ok()?;
             conn.create_window(
-                x11rb::COPY_FROM_PARENT,
+                x11rb::COPY_FROM_PARENT as u8,
                 child,
                 parent,
                 0,
@@ -240,10 +240,10 @@ mod imp {
             let _ = self.conn.configure_window(
                 self.child,
                 &ConfigureWindowAux::new()
-                    .x(x)
-                    .y(y)
-                    .width(w.max(1) as u32)
-                    .height(h.max(1) as u32),
+                    .x(x as i16)
+                    .y(y as i16)
+                    .width(w.max(1) as u16)
+                    .height(h.max(1) as u16),
             );
             let _ = self.conn.flush();
         }

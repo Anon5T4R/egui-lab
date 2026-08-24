@@ -27,11 +27,10 @@ fn mpv_dir() -> PathBuf {
 
 /// Path completo do executável do mpv (Windows: LabSuite; Linux: PATH).
 pub fn mpv_path() -> PathBuf {
-    if cfg!(windows) {
-        mpv_dir().join("mpv.exe")
-    } else {
-        PathBuf::from("mpv")
-    }
+    #[cfg(windows)]
+    return mpv_dir().join("mpv.exe");
+    #[cfg(not(windows))]
+    return PathBuf::from("mpv");
 }
 
 /// Status do setup do mpv.

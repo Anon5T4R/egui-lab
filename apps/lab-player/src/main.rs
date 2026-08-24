@@ -127,12 +127,22 @@ impl PlayerApp {
         let (mpv_check, status_msg) = match mpv_setup::check() {
             mpv_setup::MpvStatus::Ready => (None, String::new()),
             mpv_setup::MpvStatus::NeedsDownload(msg) => {
-                let (tx, rx) = std::sync::mpsc::channel();
-                std::thread::spawn(move || {
-                    let _ = tx.send(mpv_setup::download());
-                });
-                eprintln!("[lab-player] {msg}");
-                (Some(rx), "baixando mpv...".into())
+                // Só existe no Windows — no Linux o check() nunca retorna
+                // NeedsDownload (o download é build Windows).
+                #[cfg(windows)]
+                {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    std::thread::spawn(move || {
+                        let _ = tx.send(mpv_setup::download());
+                    });
+                    eprintln!("[lab-player] {msg}");
+                    (Some(rx), "baixando mpv...".into())
+                }
+                #[cfg(not(windows))]
+                {
+                    let _ = msg;
+                    (None, String::new())
+                }
             }
             mpv_setup::MpvStatus::Error(e) => (None, format!("⚠ {e}")),
         };
