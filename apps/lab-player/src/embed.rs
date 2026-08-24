@@ -206,7 +206,7 @@ mod imp {
             let raw = frame.window_handle().ok()?.as_raw();
             let parent = match raw {
                 RawWindowHandle::Xlib(h) => h.window as u32,
-                RawWindowHandle::Xcb(h) => h.window as u32,
+                RawWindowHandle::Xcb(h) => h.window.get(),
                 _ => return None,
             };
 
@@ -240,10 +240,10 @@ mod imp {
             let _ = self.conn.configure_window(
                 self.child,
                 &ConfigureWindowAux::new()
-                    .x(x as i16)
-                    .y(y as i16)
-                    .width(w.max(1) as u16)
-                    .height(h.max(1) as u16),
+                    .x(x)
+                    .y(y)
+                    .width(w.max(1) as u32)
+                    .height(h.max(1) as u32),
             );
             let _ = self.conn.flush();
         }
