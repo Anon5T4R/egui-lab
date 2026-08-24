@@ -4,7 +4,8 @@
 //!
 //! Visualização: a image crate decodifica → textura egui; zoom por roda do
 //! mouse com âncora no cursor, pan com arrastar, encaixe na janela (tecla
-//! 0/F). Setas ←/→ navegam a pasta (mesma sequência do oficial).
+//! 0), tela cheia sem interface (F), janela no tamanho da imagem (R),
+//! setas ←/→ navegam a pasta (mesma sequência do oficial).
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -19,6 +20,106 @@ use lab_ui::i18n::{self, Key};
 use lab_ui::theme;
 
 const APP_ID: &str = "lab-image";
+
+/// Área útil do monitor em POINTS (tamanho, origem) — o espaço que a
+/// taskbar NÃO come. Windows: `SPI_GETWORKAREA` ∪ strip docked da taskbar
+/// quando ela é auto-hide (escondida, o SPI devolve a tela inteira, mas o
+/// espaço que ela ocupa ao aparecer é real — o usuário pediu pra nunca
+/// deixar imagem lá). Outros: 90% do monitor.
+fn work_area(ctx: &egui::Context) -> (egui::Vec2, egui::Pos2) {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::RECT;
+        use windows::Win32::UI::Shell::{
+            ABM_GETSTATE, ABM_GETTASKBARPOS, ABE_BOTTOM, ABE_LEFT, ABE_RIGHT, ABE_TOP,
+            APPBARDATA, SHAppBarMessage,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::{
+            FindWindowW, SystemParametersInfoW, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+            SPI_GETWORKAREA,
+        };
+
+        let ppp = ctx.pixels_per_point();
+        let monitor = ctx
+            .input(|i| i.viewport().monitor_size)
+            .unwrap_or(egui::vec2(1920.0, 1080.0))
+            * ppp; // px
+
+        // Work area clássica (taskbar fixa já descontada).
+        let mut wa = RECT::default();
+        let ok = unsafe {
+            SystemParametersInfoW(
+                SPI_GETWORKAREA,
+                0,
+                Some(&mut wa as *mut RECT as *mut core::ffi::c_void),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+            )
+            .is_ok()
+        };
+        if !ok {
+            return (
+                egui::vec2(monitor.x / ppp * 0.9, monitor.y / ppp * 0.9),
+                egui::pos2(0.0, 0.0),
+            );
+        }
+
+        // Auto-hide: o SPI mente (tela cheia). Pega o strip docked da
+        // taskbar e desconta do monitor.
+        unsafe {
+            let tray = FindWindowW(
+                windows::core::PCWSTR::from_raw(
+                    "Shell_TrayWnd\0".encode_utf16().collect::<Vec<_>>().as_ptr(),
+                ),
+                windows::core::PCWSTR::null(),
+            );
+            if let Ok(tray) = tray {
+                let mut abd = APPBARDATA {
+                    cbSize: std::mem::size_of::<APPBARDATA>() as u32,
+                    hWnd: tray,
+                    ..Default::default()
+                };
+                let state = SHAppBarMessage(ABM_GETSTATE, &mut abd);
+                if state & 1 != 0 {
+                    // ABS_AUTOHIDE
+                    if SHAppBarMessage(ABM_GETTASKBARPOS, &mut abd) != 0 {
+                        let strip = &abd.rc;
+                        // Desconta o strip conforme a borda em que docks.
+                        let (w, h) = (monitor.x as i32, monitor.y as i32);
+                        let eff = match abd.uEdge {
+                            e if e == ABE_LEFT => RECT { left: strip.right, top: 0, right: w, bottom: h },
+                            e if e == ABE_TOP => RECT { left: 0, top: strip.bottom, right: w, bottom: h },
+                            e if e == ABE_RIGHT => RECT { left: 0, top: 0, right: strip.left, bottom: h },
+                            e if e == ABE_BOTTOM => RECT { left: 0, top: 0, right: w, bottom: strip.top },
+                            _ => wa,
+                        };
+                        return (
+                            egui::vec2(
+                                (eff.right - eff.left) as f32 / ppp,
+                                (eff.bottom - eff.top) as f32 / ppp,
+                            ),
+                            egui::pos2(eff.left as f32 / ppp, eff.top as f32 / ppp),
+                        );
+                    }
+                }
+            }
+        }
+
+        (
+            egui::vec2(
+                (wa.right - wa.left) as f32 / ppp,
+                (wa.bottom - wa.top) as f32 / ppp,
+            ),
+            egui::pos2(wa.left as f32 / ppp, wa.top as f32 / ppp),
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        let m = ctx
+            .input(|i| i.viewport().monitor_size)
+            .unwrap_or(egui::vec2(1920.0, 1080.0));
+        (m * 0.9, egui::pos2(m.x * 0.05, m.y * 0.05))
+    }
+}
 
 fn main() -> eframe::Result<()> {
     let cfg = config::load(APP_ID);
@@ -214,22 +315,52 @@ impl eframe::App for ImageApp {
             }
         }
 
-        // Ajuste único da janela: o tamanho veio em px (points ≈ px só em
-        // 100%); com ppp real converte, e clampa em 90% do MONITOR
-        // (screen_rect no nativo é a janela, não a tela).
+        // Ajuste da janela pro tamanho da imagem ("Abrir com" no boot e
+        // tecla R): px→points, clamp na ÁREA ÚTIL (taskbar descontada) e
+        // centralização — nada par atrás da taskbar.
         if let Some([w, h]) = self.window_fix.take() {
-            let ppp = ctx.pixels_per_point();
-            let screen = ctx
-                .input(|i| i.viewport().monitor_size)
-                .unwrap_or(egui::vec2(1920.0, 1080.0));
-            let mut w = w / ppp;
-            let mut h = h / ppp;
-            let s = (screen.x * 0.9 / w).min(screen.y * 0.9 / h);
-            if s < 1.0 {
-                w *= s;
-                h *= s;
+            let fullscreen = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
+            if !fullscreen {
+                let ppp = ctx.pixels_per_point();
+                let (avail, origin) = work_area(ctx);
+                // Chrome da janela (bordas+title bar) medido do viewport
+                // real — o clamp e o centro têm que caber o OUTER inteiro,
+                // senão o title bar invade a taskbar.
+                let (cx, cy) = ctx.input(|i| {
+                    let v = i.viewport();
+                    match (v.outer_rect, v.inner_rect) {
+                        (Some(o), Some(n)) => (
+                            (o.width() - n.width()).max(0.0),
+                            (o.height() - n.height()).max(0.0),
+                        ),
+                        _ => (0.0, 40.0),
+                    }
+                });
+                let mut w = w / ppp;
+                let mut h = h / ppp;
+                let s = ((avail.x - cx) / w).min((avail.y - cy) / h);
+                if s < 1.0 {
+                    w *= s;
+                    h *= s;
+                }
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
+                    origin.x + (avail.x - (w + cx)) / 2.0,
+                    origin.y + (avail.y - (h + cy)) / 2.0,
+                )));
             }
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
+        }
+
+        // R = redimensiona a janela pra imagem ATUAL (abriu com uma,
+        // navegou pras setas — a janela acompanha a nova).
+        if ctx.input(|i| i.key_pressed(egui::Key::R)) {
+            let sz = self.tex.as_ref().map(|(_, t)| t.size_vec2());
+            if let Some(s) = sz {
+                self.window_fix = Some([s.x, s.y]);
+                // O resize roda no PRÓXIMO frame — sem isso o app idle não
+                // repinta e o comando nunca executa.
+                ctx.request_repaint();
+            }
         }
 
         // Drena resultados das threads; `goto(0)` fica fora do borrow.

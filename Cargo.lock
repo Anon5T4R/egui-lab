@@ -2587,6 +2587,7 @@ dependencies = [
  "lab-ui",
  "serde",
  "serde_json",
+ "windows 0.58.0",
 ]
 
 [[package]]

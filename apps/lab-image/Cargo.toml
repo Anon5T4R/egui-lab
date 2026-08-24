@@ -12,3 +12,12 @@ serde.workspace = true
 serde_json.workspace = true
 image.workspace = true
 kamadak-exif = "0.6"
+
+[target.'cfg(windows)'.dependencies]
+# Área útil do monitor (SPI_GETWORKAREA — desconta a taskbar) pro clamp
+# da janela no tamanho da imagem.
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+] }
