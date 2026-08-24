@@ -169,6 +169,15 @@ leitura: o terreno onde o webview ganha com folga.
     via x11rb + XID do raw-window-handle, força XWayland; mpv do PATH).
     Clamp corrigido: `monitor_size`, não `screen_rect` (= janela no
     eframe nativo). v0.4.0.
+16. **Onda 16 (feita — área útil de verdade):** tecla **R** no image
+    redimensiona a janela pra imagem atual (navegou com setas, apertou R,
+    janela acompanha; precisa `request_repaint` — app idle não repinta o
+    frame que executaria o resize). Clamp/centro pela área útil REAL:
+    taskbar **auto-hide** engana o `SPI_GETWORKAREA` (devolve tela cheia
+    — o strip que ela come ao aparecer é real), então `ABM_GETTASKBARPOS`
+    desconta o strip docked; e o chrome da janela (outer−inner do
+    viewport) entra na conta pro OUTER inteiro caber (title bar não invade
+    a taskbar). Player idem no resize por Dims. v0.4.1.
 
 ## Releases
 
