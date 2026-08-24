@@ -41,7 +41,13 @@ fn build(secret_b32: &str) -> Result<TOTP, String> {
     // new_unchecked (não new): o `new` exige segredo >= 128 bits, mas segredos
     // reais (Google Authenticator etc.) costumam ter 80 bits (16 chars base32) —
     // rejeitá-los quebraria o import. skew=1 tolera 1 passo de diferença de relógio.
-    Ok(TOTP::new_unchecked(Algorithm::SHA1, DIGITS, 1, PERIOD, bytes))
+    Ok(TOTP::new_unchecked(
+        Algorithm::SHA1,
+        DIGITS,
+        1,
+        PERIOD,
+        bytes,
+    ))
 }
 
 /// Código atual + quanto falta para virar. Erro se a chave não for base32 válida.

@@ -8,24 +8,30 @@
 
 use std::path::{Path, PathBuf};
 
+#[cfg(windows)]
 use sevenz_rust2::{ArchiveReader, Password};
 
 /// Versão do mpv que baixamos. Atualizar quando necessário.
 /// Fonte: https://sourceforge.net/projects/mpv-player-windows/files/64bit/
+#[cfg(windows)]
 const MPV_ARCHIVE_NAME: &str = "mpv-x86_64-20260809-git-dd5d17d328.7z";
+#[cfg(windows)]
 const MPV_URL: &str = "https://sourceforge.net/projects/mpv-player-windows/files/64bit/mpv-x86_64-20260809-git-dd5d17d328.7z/download";
 
-/// Diretório onde guardamos o mpv portátil.
+/// Diretório onde guardamos o mpv portátil (Windows).
+#[cfg(windows)]
 fn mpv_dir() -> PathBuf {
-    let base = std::env::var("LOCALAPPDATA")
-        .or_else(|_| std::env::var("HOME").map(|h| format!("{h}/.local/share")))
-        .unwrap_or_else(|_| ".".into());
+    let base = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".into());
     PathBuf::from(base).join("LabSuite").join("mpv")
 }
 
-/// Path completo do executável do mpv.
+/// Path completo do executável do mpv (Windows: LabSuite; Linux: PATH).
 pub fn mpv_path() -> PathBuf {
-    mpv_dir().join(if cfg!(windows) { "mpv.exe" } else { "mv" })
+    if cfg!(windows) {
+        mpv_dir().join("mpv.exe")
+    } else {
+        PathBuf::from("mpv")
+    }
 }
 
 /// Status do setup do mpv.
@@ -34,22 +40,41 @@ pub enum MpvStatus {
     Ready,
     /// mpv precisa ser baixado. Mensagem descritiva para o UI.
     NeedsDownload(String),
+    /// Erro irrecuperável (Linux sem mpv no PATH).
+    #[allow(dead_code)]
+    Error(String),
 }
 
-/// Verifica se o mpv está disponível. Se não, retorna NeedsDownload.
+/// Verifica se o mpv está disponível.
+/// Windows: cópia portátil em LabSuite (baixa se faltar).
+/// Linux: mpv do PATH (pacote da distro — o download é build Windows).
 pub fn check() -> MpvStatus {
+    if !cfg!(windows) {
+        let ok = std::process::Command::new("mpv")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        return if ok {
+            MpvStatus::Ready
+        } else {
+            MpvStatus::Error("mpv não está no PATH — instale (ex.: sudo apt install mpv)".into())
+        };
+    }
+
     let path = mpv_path();
     if path.exists() {
         return MpvStatus::Ready;
     }
 
-    MpvStatus::NeedsDownload(
-        "mpv não encontrado. Será baixado automaticamente (~80 MB).".into(),
-    )
+    MpvStatus::NeedsDownload("mpv não encontrado. Será baixado automaticamente (~80 MB).".into())
 }
 
-/// Baixa e extrai o mpv portátil. Bloqueante — chamar em thread separada.
-/// Retorna o path do executável ou erro.
+/// Baixa e extrai o mpv portátil (Windows). Bloqueante — chamar em thread
+/// separada. Retorna o path do executável ou erro.
+#[cfg(windows)]
 pub fn download() -> Result<PathBuf, String> {
     let dir = mpv_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("criar pasta: {e}"))?;
@@ -78,13 +103,17 @@ pub fn download() -> Result<PathBuf, String> {
     Ok(target)
 }
 
+#[cfg(windows)]
 fn download_file(url: &str, dest: &Path) -> Result<(), String> {
     let agent = ureq::AgentBuilder::new()
         .timeout(std::time::Duration::from_secs(300))
         .redirects(10)
         .build();
 
-    let resp = agent.get(url).call().map_err(|e| format!("download: {e}"))?;
+    let resp = agent
+        .get(url)
+        .call()
+        .map_err(|e| format!("download: {e}"))?;
 
     let mut reader = resp.into_reader();
     let mut file = std::fs::File::create(dest).map_err(|e| format!("criar arquivo: {e}"))?;
@@ -94,11 +123,12 @@ fn download_file(url: &str, dest: &Path) -> Result<(), String> {
 }
 
 /// Extrai um .7z usando sevenz-rust2 (Rust puro).
+#[cfg(windows)]
 fn extract_7z(archive: &Path, dest: &Path) -> Result<(), String> {
     let file = std::fs::File::open(archive).map_err(|e| format!("abrir archive: {e}"))?;
 
-    let mut reader = ArchiveReader::new(file, Password::empty())
-        .map_err(|e| format!("abrir 7z: {e}"))?;
+    let mut reader =
+        ArchiveReader::new(file, Password::empty()).map_err(|e| format!("abrir 7z: {e}"))?;
 
     // 7z costuma ser sólido: for_each_entries decodifica em sequência.
     reader
@@ -146,8 +176,9 @@ fn extract_7z(archive: &Path, dest: &Path) -> Result<(), String> {
 }
 
 /// Procura o mpv.exe na árvore extraída.
+#[cfg(windows)]
 fn find_mpv_exe(dir: &Path) -> Result<PathBuf, String> {
-    let exe_name = if cfg!(windows) { "mpv.exe" } else { "mpv" };
+    let exe_name = "mpv.exe";
 
     // Procura na raiz
     if dir.join(exe_name).exists() {

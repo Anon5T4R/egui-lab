@@ -384,7 +384,10 @@ mod tests {
         let mut file = enc("pw", b"segredo importante");
         let last = file.len() - 1;
         file[last] ^= 0x01; // vira um bit do tag/ciphertext
-        assert_eq!(decrypt_vault("pw", &file).unwrap_err(), CryptoError::Decrypt);
+        assert_eq!(
+            decrypt_vault("pw", &file).unwrap_err(),
+            CryptoError::Decrypt
+        );
     }
 
     #[test]
@@ -393,14 +396,20 @@ mod tests {
         // autenticação: o header é AAD, então o AEAD rejeita.
         let mut file = enc("pw", b"segredo");
         file[8] ^= 0x01;
-        assert_eq!(decrypt_vault("pw", &file).unwrap_err(), CryptoError::Decrypt);
+        assert_eq!(
+            decrypt_vault("pw", &file).unwrap_err(),
+            CryptoError::Decrypt
+        );
     }
 
     #[test]
     fn salt_adulterado_falha() {
         let mut file = enc("pw", b"segredo");
         file[20] ^= 0x01; // 1º byte do salt
-        assert_eq!(decrypt_vault("pw", &file).unwrap_err(), CryptoError::Decrypt);
+        assert_eq!(
+            decrypt_vault("pw", &file).unwrap_err(),
+            CryptoError::Decrypt
+        );
     }
 
     #[test]

@@ -10,12 +10,11 @@ egui.workspace = true
 lab-ui = { path = "../../crates/lab-ui" }
 serde.workspace = true
 serde_json.workspace = true
-ureq.workspace = true
-sevenz-rust2.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 # IPC com o mpv via named pipe (o desenho provado do LocalPlayer oficial:
-# handle único + leitura não-bloqueante — ver mpv.rs).
+# handle único + leitura não-bloqueante — ver mpv.rs) + download/extração
+# do mpv portátil (ureq + sevenz-rust2, Rust puro).
 windows = { version = "0.58", features = [
     "Win32_Storage_FileSystem",
     "Win32_System_Pipes",
@@ -26,3 +25,11 @@ windows = { version = "0.58", features = [
 # Diálogo de arquivo nativo (win32; no Linux o caminho é digitado —
 # política do lab: AppImage enxuto)
 rfd.workspace = true
+ureq.workspace = true
+sevenz-rust2.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+# Child X11 pro embed do vídeo (--wid do mpv); rwh expõe o XID da janela
+# eframe (X11/XWayland — Wayland puro cai pro mpv em janela própria).
+x11rb.workspace = true
+raw-window-handle.workspace = true

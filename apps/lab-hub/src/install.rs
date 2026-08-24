@@ -192,9 +192,7 @@ fn download_to(url: &str, dest: &Path, tx: &Sender<f32>) -> Result<(), String> {
         .set("User-Agent", "lab-hub")
         .call()
         .map_err(|e| format!("{url}: {e}"))?;
-    let total: Option<u64> = resp
-        .header("Content-Length")
-        .and_then(|v| v.parse().ok());
+    let total: Option<u64> = resp.header("Content-Length").and_then(|v| v.parse().ok());
     let mut reader = resp.into_reader();
     if let Some(dir) = dest.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
@@ -263,7 +261,11 @@ pub fn install_app(
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
 
-    let asset = if cfg!(windows) { app.win_asset } else { app.linux_asset };
+    let asset = if cfg!(windows) {
+        app.win_asset
+    } else {
+        app.linux_asset
+    };
     let zip_path = staging.join(asset);
     download_to(&asset_url(tag, asset), &zip_path, tx)?;
     let _ = tx.send(0.95);
@@ -305,7 +307,9 @@ pub fn install_app(
 #[cfg(unix)]
 fn make_executable(path: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
-    let mut perm = std::fs::metadata(path).map_err(|e| e.to_string())?.permissions();
+    let mut perm = std::fs::metadata(path)
+        .map_err(|e| e.to_string())?
+        .permissions();
     perm.set_mode(0o755);
     std::fs::set_permissions(path, perm).map_err(|e| e.to_string())
 }
@@ -341,7 +345,11 @@ pub fn update_self(tag: &str, tx: &Sender<f32>) -> Result<(), String> {
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
 
-    let asset = if cfg!(windows) { HUB.win_asset } else { HUB.linux_asset };
+    let asset = if cfg!(windows) {
+        HUB.win_asset
+    } else {
+        HUB.linux_asset
+    };
     let zip_path = staging.join(asset);
     download_to(&asset_url(tag, asset), &zip_path, tx)?;
     let _ = tx.send(0.95);
@@ -383,7 +391,8 @@ pub fn uninstall_app(
     app: &AppDef,
     installed: &mut std::collections::HashMap<String, InstalledApp>,
 ) -> Result<(), String> {
-    std::fs::remove_dir_all(app_dir(app.id)).map_err(|e| format!("{}: {e}", app_dir(app.id).display()))?;
+    std::fs::remove_dir_all(app_dir(app.id))
+        .map_err(|e| format!("{}: {e}", app_dir(app.id).display()))?;
     installed.remove(app.id);
     save_installed(installed);
     let _ = crate::shortcut::remove(app.id, app.display, crate::shortcut::Where::StartMenu);

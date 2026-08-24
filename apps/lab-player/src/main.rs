@@ -22,8 +22,7 @@ const APP_ID: &str = "lab-player";
 
 /// Extensões aceitas na playlist (o filtro do diálogo, do drag-drop e dos args).
 const MEDIA_EXTS: &[&str] = &[
-    "mp4", "mkv", "webm", "mov", "avi", "m4v", "wmv", "mp3", "flac", "ogg", "wav", "m4a",
-    "opus",
+    "mp4", "mkv", "webm", "mov", "avi", "m4v", "wmv", "mp3", "flac", "ogg", "wav", "m4a", "opus",
 ];
 
 fn is_media(p: &std::path::Path) -> bool {
@@ -34,6 +33,16 @@ fn is_media(p: &std::path::Path) -> bool {
 }
 
 fn main() -> eframe::Result<()> {
+    // Embed via --wid exige X11 dos dois lados (janela do app e mpv).
+    // Sem isso o winit prefere Wayland nativo, onde não existe XID. Com a
+    // variável removida cai pro XWayland — presente em praticamente
+    // qualquer desktop; e o mpv filho herda o env, ficando X11 também.
+    #[cfg(target_os = "linux")]
+    {
+        std::env::remove_var("WAYLAND_DISPLAY");
+        std::env::remove_var("WAYLAND_SOCKET");
+    }
+
     let cfg = config::load(APP_ID);
 
     // "Abrir com" do Windows manda os caminhos como args (pode ser mais de um).
@@ -73,8 +82,19 @@ struct PlayerApp {
     mpv_check: Option<std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>>,
     /// Índice a tocar assim que o mpv estiver pronto (veio de args).
     initial_play: Option<usize>,
-    /// Child window que recebe o vídeo (`--wid`). Windows-only.
+    /// Child window que recebe o vídeo (`--wid`). Windows: HWND; Linux: XID.
     embed: Option<embed::VideoEmbed>,
+    /// Embed descartado (sessão sem X11) — não tenta mais, mpv em janela
+    /// própria.
+    embed_dead: bool,
+    /// Tentativas de criar o embed (limite pra não girar pra sempre).
+    embed_tries: u32,
+    /// Interface visível (controles/playlist). Escondida enquanto o vídeo
+    /// roda — clique ou F traz de volta.
+    chrome: bool,
+    /// Dimensões do vídeo atual (px) — redimensiona a janela pro tamanho
+    /// do vídeo quando a interface está escondida.
+    video_size: Option<[f32; 2]>,
 }
 
 impl PlayerApp {
@@ -97,13 +117,13 @@ impl PlayerApp {
                 first_arg = Some(a.clone());
             }
         }
-        let initial_play = first_arg
-            .and_then(|f| playlist.files.iter().position(|x| *x == f));
+        let initial_play = first_arg.and_then(|f| playlist.files.iter().position(|x| *x == f));
         if initial_play.is_some() {
             resume::save_playlist(&playlist);
         }
 
-        // Checa se o mpv está disponível. Se não, dispara download em background.
+        // Checa se o mpv está disponível. Se não, dispara download em
+        // background (Windows) ou registra o erro (Linux sem mpv no PATH).
         let (mpv_check, status_msg) = match mpv_setup::check() {
             mpv_setup::MpvStatus::Ready => (None, String::new()),
             mpv_setup::MpvStatus::NeedsDownload(msg) => {
@@ -114,6 +134,7 @@ impl PlayerApp {
                 eprintln!("[lab-player] {msg}");
                 (Some(rx), "baixando mpv...".into())
             }
+            mpv_setup::MpvStatus::Error(e) => (None, format!("⚠ {e}")),
         };
 
         Self {
@@ -132,6 +153,10 @@ impl PlayerApp {
             mpv_check,
             initial_play,
             embed: None,
+            embed_dead: false,
+            embed_tries: 0,
+            chrome: true,
+            video_size: None,
         }
     }
 
@@ -140,7 +165,7 @@ impl PlayerApp {
             return;
         };
         let r = resume::position_of(&self.resume, &path);
-        let wid = self.embed.as_ref().map(|e| e.child_hwnd());
+        let wid = self.embed.as_ref().map(|e| e.child_handle());
         let _ = self.cmd_tx.send(Cmd::Open {
             path,
             resume: r,
@@ -148,6 +173,9 @@ impl PlayerApp {
             wid,
         });
         self.idx = Some(i);
+        // Tocando = só o vídeo: interface some (clique ou F traz de volta).
+        self.chrome = false;
+        self.video_size = None;
         self.now = self
             .playlist
             .files
@@ -188,7 +216,7 @@ fn fmt_time(s: f64) -> String {
 }
 
 impl eframe::App for PlayerApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // Checa se o download do mpv terminou.
         if let Some(rx) = &self.mpv_check {
             if let Ok(result) = rx.try_recv() {
@@ -206,10 +234,19 @@ impl eframe::App for PlayerApp {
             }
         }
 
-        // Garante o child de vídeo (janela já existe no primeiro update;
-        // se o FindWindow ainda não achou, tenta de novo no próximo frame).
-        if self.embed.is_none() {
-            self.embed = embed::VideoEmbed::new("Lab Player");
+        // Garante o child de vídeo (Windows: HWND por título; Linux: XID
+        // via raw-window-handle/X11). None pode ser "ainda não" (janela
+        // não nasceu) ou "impossível" (Wayland puro) — tenta por uns 2 s
+        // e desiste.
+        if self.embed.is_none() && !self.embed_dead {
+            if let Some(e) = embed::VideoEmbed::new("Lab Player", frame) {
+                self.embed = Some(e);
+                self.embed_tries = 0;
+            } else if self.embed_tries > 120 {
+                self.embed_dead = true;
+            } else {
+                self.embed_tries += 1;
+            }
         }
 
         // "Abrir com": toca o arquivo dos args assim que o mpv estiver
@@ -263,11 +300,44 @@ impl eframe::App for PlayerApp {
                         self.duration = d;
                     }
                 }
+                Event::Dims(w, h) => {
+                    // Acumula eixos (mpv manda um property-change por eixo).
+                    let size = self.video_size.get_or_insert([0.0, 0.0]);
+                    if w > 0 {
+                        size[0] = w as f32;
+                    }
+                    if h > 0 {
+                        size[1] = h as f32;
+                    }
+                    // Janela do tamanho do vídeo (só com interface oculta —
+                    // com painéis o conteúdo se reorganiza e o resize seria
+                    // redundante). Clampa em 90% da tela.
+                    let [vw, vh] = *size;
+                    if vw > 0.0 && vh > 0.0 && !self.chrome && !self.embed_dead {
+                        let ppp = ctx.pixels_per_point();
+                        // Clamp: 90% do MONITOR (screen_rect aqui é a
+                        // janela, não a tela — armadilha do eframe nativo).
+                        let screen = ctx
+                            .input(|i| i.viewport().monitor_size)
+                            .unwrap_or(egui::vec2(1920.0, 1080.0));
+                        let mut w = vw / ppp;
+                        let mut h = vh / ppp;
+                        let s = (screen.x * 0.9 / w).min(screen.y * 0.9 / h);
+                        if s < 1.0 {
+                            w *= s;
+                            h *= s;
+                        }
+                        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
+                    }
+                }
                 Event::EndFile => ended = true,
                 Event::Exited => {
                     self.status = "mpv fechado".into();
                     self.idx = None;
                     self.now.clear();
+                    // Sem vídeo → interface de volta (usuário precisa dos
+                    // botões pra escolher outra coisa).
+                    self.chrome = true;
                 }
                 Event::Ready => {
                     if self.paused {
@@ -300,152 +370,174 @@ impl eframe::App for PlayerApp {
             }
         }
 
+        // F = tela cheia sem interface (o modelo "viewer"); Esc volta.
+        if ctx.input(|i| i.key_pressed(egui::Key::F)) {
+            let fs = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fs));
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+        }
+
+        // Clique na área do vídeo (capturado pelo child — WndProc no
+        // Windows, ButtonPress no X11) alterna a interface. Com o child
+        // oculto (parado), o clique chega no egui normalmente.
+        if let Some(e) = &self.embed {
+            if e.take_click() {
+                self.chrome = !self.chrome;
+            }
+        }
+
         // Motor vivo → frames rápidos (seek bar).
         if self.idx.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
         }
 
-        egui::TopBottomPanel::top("topo").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.strong("Lab Player");
-                ui.label(egui::RichText::new(&self.now).small().weak());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if lab_ui::settings_ui(ui, &mut self.cfg) {
-                        theme::apply(ctx, self.cfg.theme);
-                        let _ = config::save(APP_ID, &self.cfg);
-                    }
+        // Interface (topo/controles/playlist) só quando `chrome` — tocando,
+        // a janela é só o vídeo.
+        let chrome = self.chrome;
+        if chrome {
+            egui::TopBottomPanel::top("topo").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.strong("Lab Player");
+                    ui.label(egui::RichText::new(&self.now).small().weak());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if lab_ui::settings_ui(ui, &mut self.cfg) {
+                            theme::apply(ctx, self.cfg.theme);
+                            let _ = config::save(APP_ID, &self.cfg);
+                        }
+                    });
                 });
             });
-        });
+        }
 
-        egui::TopBottomPanel::bottom("controles").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                let playing = self.idx.is_some() && self.mpv_ready();
-                let label = if self.paused { "▶" } else { "⏸" };
-                if ui
-                    .add_enabled(playing, egui::Button::new(label))
-                    .clicked()
-                {
-                    self.paused = !self.paused;
-                    let _ = self.cmd_tx.send(if self.paused {
-                        Cmd::Pause
-                    } else {
-                        Cmd::Unpause
-                    });
-                }
-                if ui
-                    .add_enabled(playing, egui::Button::new("⏹"))
-                    .clicked()
-                {
-                    let _ = self.cmd_tx.send(Cmd::Stop);
-                    self.idx = None;
-                    self.now.clear();
-                }
-                ui.label(format!(
-                    "{} / {}",
-                    fmt_time(self.time),
-                    fmt_time(self.duration)
-                ));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add(
-                        egui::Slider::new(&mut self.volume, 0.0..=100.0)
-                            .text("♪"),
-                    )
-                    .changed()
-                    .then(|| {
-                        let _ = self.cmd_tx.send(Cmd::Volume(self.volume));
+        if chrome {
+            egui::TopBottomPanel::bottom("controles").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let playing = self.idx.is_some() && self.mpv_ready();
+                    let label = if self.paused { "▶" } else { "⏸" };
+                    if ui.add_enabled(playing, egui::Button::new(label)).clicked() {
+                        self.paused = !self.paused;
+                        let _ = self.cmd_tx.send(if self.paused {
+                            Cmd::Pause
+                        } else {
+                            Cmd::Unpause
+                        });
+                    }
+                    if ui.add_enabled(playing, egui::Button::new("⏹")).clicked() {
+                        let _ = self.cmd_tx.send(Cmd::Stop);
+                        self.idx = None;
+                        self.now.clear();
+                    }
+                    ui.label(format!(
+                        "{} / {}",
+                        fmt_time(self.time),
+                        fmt_time(self.duration)
+                    ));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add(egui::Slider::new(&mut self.volume, 0.0..=100.0).text("♪"))
+                            .changed()
+                            .then(|| {
+                                let _ = self.cmd_tx.send(Cmd::Volume(self.volume));
+                            });
                     });
                 });
+                // Seek bar.
+                let playing = self.idx.is_some() && self.mpv_ready();
+                let mut t = self.time;
+                let slider = ui.add_enabled(
+                    playing,
+                    egui::Slider::new(&mut t, 0.0..=self.duration.max(1.0)).show_value(false),
+                );
+                if slider.drag_stopped() && t != self.time {
+                    let _ = self.cmd_tx.send(Cmd::SeekAbsolute(t));
+                    self.time = t;
+                }
+                if !self.status.is_empty() {
+                    ui.label(egui::RichText::new(&self.status).small().weak());
+                }
+                if self.mpv_check.is_some() {
+                    ui.spinner();
+                }
             });
-            // Seek bar.
-            let playing = self.idx.is_some() && self.mpv_ready();
-            let mut t = self.time;
-            let slider = ui.add_enabled(
-                playing,
-                egui::Slider::new(&mut t, 0.0..=self.duration.max(1.0))
-                    .show_value(false),
-            );
-            if slider.drag_stopped() && t != self.time {
-                let _ = self.cmd_tx.send(Cmd::SeekAbsolute(t));
-                self.time = t;
-            }
-            if !self.status.is_empty() {
-                ui.label(egui::RichText::new(&self.status).small().weak());
-            }
-            if self.mpv_check.is_some() {
-                ui.spinner();
-            }
-        });
+        }
 
         // Playlist: painel inferior fixo entre os controles e o vídeo.
-        egui::TopBottomPanel::bottom("playlist")
-            .exact_height(140.0)
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    let t = i18n::t(self.cfg.lang, Key::Items);
-                    ui.strong(t);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("+ arquivo").clicked() {
-                            if let Some(p) = pick_media() {
-                                self.playlist.files.push(p);
-                                resume::save_playlist(&self.playlist);
-                            }
-                        }
-                        if ui.button("+ pasta").clicked() {
-                            if let Some(dir) = pick_dir() {
-                                if let Ok(files) = list_media(&dir) {
-                                    self.playlist.files.extend(files);
+        if chrome {
+            egui::TopBottomPanel::bottom("playlist")
+                .exact_height(140.0)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        let t = i18n::t(self.cfg.lang, Key::Items);
+                        ui.strong(t);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button("+ arquivo").clicked() {
+                                if let Some(p) = pick_media() {
+                                    self.playlist.files.push(p);
                                     resume::save_playlist(&self.playlist);
                                 }
                             }
-                        }
-                        if ui
-                            .add_enabled(
-                                !self.playlist.files.is_empty(),
-                                egui::Button::new(i18n::t(self.cfg.lang, Key::Clear)),
-                            )
-                            .clicked()
-                        {
-                            self.playlist.files.clear();
-                            self.idx = None;
-                            resume::save_playlist(&self.playlist);
+                            if ui.button("+ pasta").clicked() {
+                                if let Some(dir) = pick_dir() {
+                                    if let Ok(files) = list_media(&dir) {
+                                        self.playlist.files.extend(files);
+                                        resume::save_playlist(&self.playlist);
+                                    }
+                                }
+                            }
+                            if ui
+                                .add_enabled(
+                                    !self.playlist.files.is_empty(),
+                                    egui::Button::new(i18n::t(self.cfg.lang, Key::Clear)),
+                                )
+                                .clicked()
+                            {
+                                self.playlist.files.clear();
+                                self.idx = None;
+                                resume::save_playlist(&self.playlist);
+                            }
+                        });
+                    });
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        for (i, f) in self.playlist.files.clone().iter().enumerate() {
+                            let name = std::path::Path::new(f)
+                                .file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| f.clone());
+                            let is_now = self.idx == Some(i);
+                            if ui.selectable_label(is_now, &name).clicked() && self.mpv_ready() {
+                                self.play(i);
+                            }
                         }
                     });
                 });
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    for (i, f) in self.playlist.files.clone().iter().enumerate() {
-                        let name = std::path::Path::new(f)
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_else(|| f.clone());
-                        let is_now = self.idx == Some(i);
-                        if ui
-                            .selectable_label(is_now, &name)
-                            .clicked()
-                            && self.mpv_ready()
-                        {
-                            self.play(i);
-                        }
-                    }
-                });
-            });
+        }
 
         // Vídeo: painel central. O mpv desenha no child window posicionado
         // sobre este retângulo (DWM compõe acima da superfície GL).
         let ppp = ctx.pixels_per_point();
         let mut video_rect = egui::Rect::NOTHING;
+        let mut clicked_idle = false;
         egui::CentralPanel::default().show(ctx, |ui| {
             video_rect = ui.max_rect();
             if self.idx.is_none() {
-                ui.centered_and_justified(|ui| {
-                    ui.label(
-                        egui::RichText::new("arraste mídia aqui ou selecione na playlist")
-                            .weak(),
-                    );
-                });
+                // Parado (child oculto): o clique chega no egui — mostra a
+                // interface de volta.
+                let resp = ui
+                    .centered_and_justified(|ui| {
+                        ui.label(
+                            egui::RichText::new("arraste mídia aqui ou selecione na playlist")
+                                .weak(),
+                        );
+                    })
+                    .response;
+                clicked_idle = resp.clicked();
             }
         });
+        if clicked_idle {
+            self.chrome = true;
+        }
 
         // Reposiciona o child do vídeo a cada frame (barato; resize/dpi
         // saem de graça) e alterna a visibilidade com o estado do play.
@@ -469,7 +561,9 @@ fn pick_media() -> Option<String> {
         rfd::FileDialog::new()
             .add_filter(
                 "Mídia",
-                &["mp4", "mkv", "webm", "mov", "avi", "m4v", "mp3", "flac", "ogg", "wav", "m4a"],
+                &[
+                    "mp4", "mkv", "webm", "mov", "avi", "m4v", "mp3", "flac", "ogg", "wav", "m4a",
+                ],
             )
             .pick_file()
             .map(|p| p.display().to_string())
@@ -483,7 +577,9 @@ fn pick_media() -> Option<String> {
 fn pick_dir() -> Option<String> {
     #[cfg(windows)]
     {
-        rfd::FileDialog::new().pick_folder().map(|p| p.display().to_string())
+        rfd::FileDialog::new()
+            .pick_folder()
+            .map(|p| p.display().to_string())
     }
     #[cfg(not(windows))]
     {

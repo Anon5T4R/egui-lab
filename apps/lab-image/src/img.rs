@@ -7,13 +7,15 @@
 
 use std::path::{Path, PathBuf};
 
-pub const IMAGE_EXTS: &[&str] =
-    &["png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff", "ico", "avif"];
+pub const IMAGE_EXTS: &[&str] = &[
+    "png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff", "ico", "avif",
+];
 
 /// Vídeos entram na navegação (pra não sumirem do meio da pasta), mas o
 /// lab-image não os decodifica — só abre no app padrão do sistema.
-pub const VIDEO_EXTS: &[&str] =
-    &["mp4", "mov", "mkv", "webm", "avi", "m4v", "wmv", "flv", "mpg", "mpeg", "m2ts", "ts"];
+pub const VIDEO_EXTS: &[&str] = &[
+    "mp4", "mov", "mkv", "webm", "avi", "m4v", "wmv", "flv", "mpg", "mpeg", "m2ts", "ts",
+];
 
 fn has_ext(path: &Path, exts: &[&str]) -> bool {
     path.extension()
@@ -68,10 +70,14 @@ pub struct ImageInfo {
 
 /// Dimensões + tamanho sem decodificar a imagem inteira.
 pub fn image_info(path: &Path) -> Result<ImageInfo, String> {
-    let (width, height) = image::image_dimensions(path)
-        .map_err(|e| format!("ler cabeçalho: {e}"))?;
+    let (width, height) =
+        image::image_dimensions(path).map_err(|e| format!("ler cabeçalho: {e}"))?;
     let size_bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-    Ok(ImageInfo { width, height, size_bytes })
+    Ok(ImageInfo {
+        width,
+        height,
+        size_bytes,
+    })
 }
 
 /// Metadados EXIF legíveis (vazio se a imagem não tiver) — mesma seleção de
@@ -123,9 +129,7 @@ pub fn export(
         _ => img,
     };
     let img = match max_side {
-        Some(max) if img.width().max(img.height()) > max => {
-            img.thumbnail(max, max)
-        }
+        Some(max) if img.width().max(img.height()) > max => img.thumbnail(max, max),
         _ => img,
     };
     let dst = if dst.extension().is_none() {
@@ -192,9 +196,7 @@ mod tests {
         let d = tmpdir("exp");
         // JPEG 3×1 com EXIF de brinquedo.
         let mut buf = std::io::Cursor::new(Vec::new());
-        let img = image::RgbImage::from_fn(3, 1, |x, _| {
-            image::Rgb([(x * 80) as u8, 20, 200])
-        });
+        let img = image::RgbImage::from_fn(3, 1, |x, _| image::Rgb([(x * 80) as u8, 20, 200]));
         img.write_to(&mut buf, image::ImageFormat::Jpeg).unwrap();
         std::fs::write(d.join("in.jpg"), buf.into_inner()).unwrap();
 

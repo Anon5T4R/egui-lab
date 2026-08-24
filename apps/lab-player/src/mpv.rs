@@ -52,6 +52,8 @@ pub enum Cmd {
 pub enum Event {
     /// Progresso/tempo total (segundos; NaN quando só um dos dois muda).
     Time(f64, f64),
+    /// Dimensão do vídeo mudou (0 = esse eixo não mudou).
+    Dims(u32, u32),
     /// Fim da faixa (keep-open: mpv fica parado no fim; a playlist decide).
     EndFile,
     /// O processo do mpv morreu/foi fechado pelo usuário.
@@ -81,9 +83,7 @@ mod ipc {
 
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE, HANDLE};
-    use windows::Win32::Storage::FileSystem::{
-        CreateFileW, FILE_FLAG_OVERLAPPED, OPEN_EXISTING,
-    };
+    use windows::Win32::Storage::FileSystem::{CreateFileW, FILE_FLAG_OVERLAPPED, OPEN_EXISTING};
     use windows::Win32::System::Pipes::PeekNamedPipe;
 
     fn wide(s: &str) -> Vec<u16> {
@@ -106,7 +106,8 @@ mod ipc {
                     FILE_FLAG_OVERLAPPED, // não-bloqueante (polling anti-deadlock)
                     None,
                 )
-                .map_err(|e| format!("abrir pipe: {e}"))?;                Ok(Self {
+                .map_err(|e| format!("abrir pipe: {e}"))?;
+                Ok(Self {
                     file: File::from_raw_handle(h.0 as _),
                 })
             }
@@ -245,7 +246,12 @@ fn apply(cmd: &Cmd, child: &mut Option<Child>, ipc: &mut Option<Ipc>, ev_tx: &Se
         }
     };
     match cmd {
-        Cmd::Open { path, resume, volume, wid } => {
+        Cmd::Open {
+            path,
+            resume,
+            volume,
+            wid,
+        } => {
             kill(child, ipc);
             let addr = ipc_addr();
             if !cfg!(windows) {
@@ -279,7 +285,7 @@ fn apply(cmd: &Cmd, child: &mut Option<Child>, ipc: &mut Option<Ipc>, ev_tx: &Se
                     // A IPC nasce junto com o mpv — paciência pro connect.
                     for _ in 0..50 {
                         if let Ok(mut i) = Ipc::connect(&addr) {
-                            for prop in ["time-pos", "duration"] {
+                            for prop in ["time-pos", "duration", "width", "height"] {
                                 let _ = i.write_line(&format!(
                                     r#"{{"command":["observe_property",0,"{prop}"]}}"#
                                 ));
@@ -299,12 +305,8 @@ fn apply(cmd: &Cmd, child: &mut Option<Child>, ipc: &mut Option<Ipc>, ev_tx: &Se
         }
         Cmd::Pause => send(ipc, r#"{"command":["set_property","pause",true]}"#),
         Cmd::Unpause => send(ipc, r#"{"command":["set_property","pause",false]}"#),
-        Cmd::SeekAbsolute(t) => {
-            send(ipc, &format!(r#"{{"command":["seek",{t},"absolute"]}}"#))
-        }
-        Cmd::SeekRelative(d) => {
-            send(ipc, &format!(r#"{{"command":["seek",{d},"relative"]}}"#))
-        }
+        Cmd::SeekAbsolute(t) => send(ipc, &format!(r#"{{"command":["seek",{t},"absolute"]}}"#)),
+        Cmd::SeekRelative(d) => send(ipc, &format!(r#"{{"command":["seek",{d},"relative"]}}"#)),
         Cmd::Volume(v) => send(
             ipc,
             &format!(r#"{{"command":["set_property","volume",{v}]}}"#),
@@ -325,12 +327,15 @@ fn kill(child: &mut Option<Child>, ipc: &mut Option<Ipc>) {
     *ipc = None;
 }
 
-/// Windows: `mpv.exe` (PATH ou ao lado do exe — o oficial embute do espelho
-/// Local-runtimes; no lab basta estar no PATH). Linux: `mpv` do PATH.
+/// Binário do mpv. Windows: cópia portátil baixada pro LabSuite (ver
+/// mpv_setup). Linux: mpv do PATH (pacote da distro — o download do lab é
+/// build Windows; AppImage enxuto não empacota mpv).
 fn mpv_bin() -> String {
-    super::mpv_setup::mpv_path()
-        .to_string_lossy()
-        .into_owned()
+    if cfg!(windows) {
+        super::mpv_setup::mpv_path().to_string_lossy().into_owned()
+    } else {
+        "mpv".into()
+    }
 }
 
 fn parse_event(line: &str) -> Option<Event> {
@@ -342,6 +347,8 @@ fn parse_event(line: &str) -> Option<Event> {
             match name {
                 "time-pos" => Some(Event::Time(data.as_f64()?, f64::NAN)),
                 "duration" => Some(Event::Time(f64::NAN, data.as_f64()?)),
+                "width" => Some(Event::Dims(data.as_u64()? as u32, 0)),
+                "height" => Some(Event::Dims(0, data.as_u64()? as u32)),
                 _ => None,
             }
         }

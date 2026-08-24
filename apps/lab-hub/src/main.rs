@@ -181,8 +181,7 @@ impl eframe::App for HubApp {
                         drop_rx = true;
                         if id == "lab-hub" {
                             // Auto-update: o exe novo está no lugar; falta reiniciar.
-                            self.status =
-                                format!("✓ {}", i18n::t(self.cfg.lang, Key::Restart));
+                            self.status = format!("✓ {}", i18n::t(self.cfg.lang, Key::Restart));
                         } else {
                             self.status = format!("{id} ✓");
                         }
@@ -202,7 +201,10 @@ impl eframe::App for HubApp {
             // Canal só de latest: fecha sozinho quando a thread morre
             // (matches! em vez de ==: TryRecvError não é PartialEq).
             if self.busy.is_none()
-                && matches!(rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Disconnected))
+                && matches!(
+                    rx.try_recv(),
+                    Err(std::sync::mpsc::TryRecvError::Disconnected)
+                )
             {
                 drop_rx = true;
             }
@@ -221,7 +223,11 @@ impl eframe::App for HubApp {
                     ui.label(egui::RichText::new(t).small().weak());
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("↻").on_hover_text(i18n::t(self.cfg.lang, Key::Refresh)).clicked() {
+                    if ui
+                        .button("↻")
+                        .on_hover_text(i18n::t(self.cfg.lang, Key::Refresh))
+                        .clicked()
+                    {
                         latest_req = true;
                     }
                     if lab_ui::settings_ui(ui, &mut self.cfg) {
@@ -237,10 +243,18 @@ impl eframe::App for HubApp {
                 if ui.small_button("⬇").on_hover_text(RELEASES_PAGE).clicked() {
                     ctx.open_url(egui::OpenUrl::new_tab(RELEASES_PAGE));
                 }
-                if ui.small_button("📂").on_hover_text(i18n::t(self.cfg.lang, Key::OpenFolder)).clicked() {
+                if ui
+                    .small_button("📂")
+                    .on_hover_text(i18n::t(self.cfg.lang, Key::OpenFolder))
+                    .clicked()
+                {
                     install::open_install_folder();
                 }
-                if ui.small_button("🧹").on_hover_text(i18n::t(self.cfg.lang, Key::Clean)).clicked() {
+                if ui
+                    .small_button("🧹")
+                    .on_hover_text(i18n::t(self.cfg.lang, Key::Clean))
+                    .clicked()
+                {
                     let n = install::cleanup(&self.installed);
                     self.status = format!("🧹 {n}");
                 }
@@ -299,12 +313,9 @@ impl eframe::App for HubApp {
                         ui.vertical(|ui| {
                             ui.strong(hub.display);
                             let line = match (&self.latest, outdated) {
-                                (Some(_), false) => format!(
-                                    "{} {} · {}",
-                                    own,
-                                    t(Key::Running),
-                                    t(Key::UpToDate)
-                                ),
+                                (Some(_), false) => {
+                                    format!("{} {} · {}", own, t(Key::Running), t(Key::UpToDate))
+                                }
                                 (Some(l), true) => format!(
                                     "{} {} · {} {}",
                                     own,
@@ -315,57 +326,56 @@ impl eframe::App for HubApp {
                                 (None, _) => format!("{} {}", own, t(Key::Running)),
                             };
                             ui.label(if outdated {
-                                egui::RichText::new(line).small().color(ui.style().visuals.warn_fg_color)
+                                egui::RichText::new(line)
+                                    .small()
+                                    .color(ui.style().visuals.warn_fg_color)
                             } else {
                                 egui::RichText::new(line).small().weak()
                             });
                         });
 
-                        ui.with_layout(
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                                let busy = self.busy.is_some();
-                                if outdated
-                                    && ui
-                                        .add_enabled(!busy, egui::Button::new(t(Key::Update)))
-                                        .clicked()
-                                {
-                                    self_req = true;
-                                }
-                                let exe = std::env::current_exe().unwrap_or_default();
-                                let icon = install::icon_path(hub.id);
-                                if ui
-                                    .add_enabled(!busy, egui::Button::new(t(Key::StartMenu)).small())
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let busy = self.busy.is_some();
+                            if outdated
+                                && ui
+                                    .add_enabled(!busy, egui::Button::new(t(Key::Update)))
                                     .clicked()
-                                {
-                                    match shortcut::create(
-                                        hub.id,
-                                        hub.display,
-                                        &exe,
-                                        &icon,
-                                        shortcut::Where::StartMenu,
-                                    ) {
-                                        Ok(p) => self.status = format!("✓ {}", p.display()),
-                                        Err(e) => self.status = format!("⚠ {e}"),
-                                    }
+                            {
+                                self_req = true;
+                            }
+                            let exe = std::env::current_exe().unwrap_or_default();
+                            let icon = install::icon_path(hub.id);
+                            if ui
+                                .add_enabled(!busy, egui::Button::new(t(Key::StartMenu)).small())
+                                .clicked()
+                            {
+                                match shortcut::create(
+                                    hub.id,
+                                    hub.display,
+                                    &exe,
+                                    &icon,
+                                    shortcut::Where::StartMenu,
+                                ) {
+                                    Ok(p) => self.status = format!("✓ {}", p.display()),
+                                    Err(e) => self.status = format!("⚠ {e}"),
                                 }
-                                if ui
-                                    .add_enabled(!busy, egui::Button::new(t(Key::Desktop)).small())
-                                    .clicked()
-                                {
-                                    match shortcut::create(
-                                        hub.id,
-                                        hub.display,
-                                        &exe,
-                                        &icon,
-                                        shortcut::Where::Desktop,
-                                    ) {
-                                        Ok(p) => self.status = format!("✓ {}", p.display()),
-                                        Err(e) => self.status = format!("⚠ {e}"),
-                                    }
+                            }
+                            if ui
+                                .add_enabled(!busy, egui::Button::new(t(Key::Desktop)).small())
+                                .clicked()
+                            {
+                                match shortcut::create(
+                                    hub.id,
+                                    hub.display,
+                                    &exe,
+                                    &icon,
+                                    shortcut::Where::Desktop,
+                                ) {
+                                    Ok(p) => self.status = format!("✓ {}", p.display()),
+                                    Err(e) => self.status = format!("⚠ {e}"),
                                 }
-                            },
-                        );
+                            }
+                        });
                     });
                 });
                 ui.add_space(4.0);
@@ -379,10 +389,16 @@ impl eframe::App for HubApp {
                         let (rect, _) =
                             ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
                         if let Some(tex) = self.textures.get(app.id) {
-                            ui.put(rect, egui::Image::from_texture(tex).fit_to_exact_size(rect.size()));
+                            ui.put(
+                                rect,
+                                egui::Image::from_texture(tex).fit_to_exact_size(rect.size()),
+                            );
                         } else {
-                            ui.painter()
-                                .circle_filled(rect.center(), 16.0, ui.style().visuals.weak_text_color());
+                            ui.painter().circle_filled(
+                                rect.center(),
+                                16.0,
+                                ui.style().visuals.weak_text_color(),
+                            );
                         }
 
                         ui.vertical(|ui| {
@@ -390,37 +406,45 @@ impl eframe::App for HubApp {
                             let ins = self.installed.get(app.id);
                             match (ins, &self.latest) {
                                 (Some(i), Some(l)) if &i.version == l => {
-                                    ui.label(egui::RichText::new(format!(
-                                        "{} {} · {}",
-                                        t(Key::Installed),
-                                        i.version,
-                                        t(Key::UpToDate)
-                                    ))
-                                    .small()
-                                    .weak());
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "{} {} · {}",
+                                            t(Key::Installed),
+                                            i.version,
+                                            t(Key::UpToDate)
+                                        ))
+                                        .small()
+                                        .weak(),
+                                    );
                                 }
                                 (Some(i), Some(l)) => {
-                                    ui.label(egui::RichText::new(format!(
-                                        "{} {} · {} {}",
-                                        t(Key::Installed),
-                                        i.version,
-                                        t(Key::Available),
-                                        l
-                                    ))
-                                    .small()
-                                    .color(ui.style().visuals.warn_fg_color));
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "{} {} · {} {}",
+                                            t(Key::Installed),
+                                            i.version,
+                                            t(Key::Available),
+                                            l
+                                        ))
+                                        .small()
+                                        .color(ui.style().visuals.warn_fg_color),
+                                    );
                                 }
                                 (Some(i), None) => {
-                                    ui.label(egui::RichText::new(format!(
-                                        "{} {}",
-                                        t(Key::Installed),
-                                        i.version
-                                    ))
-                                    .small()
-                                    .weak());
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "{} {}",
+                                            t(Key::Installed),
+                                            i.version
+                                        ))
+                                        .small()
+                                        .weak(),
+                                    );
                                 }
                                 (None, _) => {
-                                    ui.label(egui::RichText::new(t(Key::NotInstalled)).small().weak());
+                                    ui.label(
+                                        egui::RichText::new(t(Key::NotInstalled)).small().weak(),
+                                    );
                                 }
                             }
                         });
@@ -451,10 +475,19 @@ impl eframe::App for HubApp {
                                 let exe = std::path::PathBuf::from(&ins.exe);
                                 let icon = install::icon_path(app.id);
                                 if ui
-                                    .add_enabled(!busy, egui::Button::new(t(Key::StartMenu)).small())
+                                    .add_enabled(
+                                        !busy,
+                                        egui::Button::new(t(Key::StartMenu)).small(),
+                                    )
                                     .clicked()
                                 {
-                                    match shortcut::create(app.id, app.display, &exe, &icon, shortcut::Where::StartMenu) {
+                                    match shortcut::create(
+                                        app.id,
+                                        app.display,
+                                        &exe,
+                                        &icon,
+                                        shortcut::Where::StartMenu,
+                                    ) {
                                         Ok(p) => self.status = format!("✓ {}", p.display()),
                                         Err(e) => self.status = format!("⚠ {e}"),
                                     }
@@ -463,14 +496,23 @@ impl eframe::App for HubApp {
                                     .add_enabled(!busy, egui::Button::new(t(Key::Desktop)).small())
                                     .clicked()
                                 {
-                                    match shortcut::create(app.id, app.display, &exe, &icon, shortcut::Where::Desktop) {
+                                    match shortcut::create(
+                                        app.id,
+                                        app.display,
+                                        &exe,
+                                        &icon,
+                                        shortcut::Where::Desktop,
+                                    ) {
                                         Ok(p) => self.status = format!("✓ {}", p.display()),
                                         Err(e) => self.status = format!("⚠ {e}"),
                                     }
                                 }
                                 // Desinstalar abre confirmação (clique sem querer).
                                 if ui
-                                    .add_enabled(!busy, egui::Button::new(t(Key::Uninstall)).small())
+                                    .add_enabled(
+                                        !busy,
+                                        egui::Button::new(t(Key::Uninstall)).small(),
+                                    )
                                     .clicked()
                                 {
                                     self.uninstall_ask = Some(app);

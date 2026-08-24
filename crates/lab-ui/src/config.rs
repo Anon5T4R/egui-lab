@@ -85,7 +85,10 @@ mod tests {
 
     #[test]
     fn ausente_ou_corrompido_vira_default() {
-        assert_eq!(load_from(Path::new("/caminho/que/nao/existe.json")), Config::default());
+        assert_eq!(
+            load_from(Path::new("/caminho/que/nao/existe.json")),
+            Config::default()
+        );
         let dir = std::env::temp_dir().join(format!(
             "lab-ui-test-bad-{}",
             std::time::SystemTime::now()

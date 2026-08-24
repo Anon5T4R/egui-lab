@@ -69,9 +69,13 @@ pub fn items_view(raw: &Value) -> Vec<ItemView> {
                         id: ri.id,
                         name: ri.name,
                         username: ri.login.as_ref().map(|l| l.username.clone()),
-                        totp: ri
-                            .login
-                            .and_then(|l| if l.totp.is_empty() { None } else { Some(l.totp) }),
+                        totp: ri.login.and_then(|l| {
+                            if l.totp.is_empty() {
+                                None
+                            } else {
+                                Some(l.totp)
+                            }
+                        }),
                         favorite: ri.favorite,
                     })
                 })
@@ -131,25 +135,22 @@ pub fn add_login(raw: &mut Value, name: &str, username: &str, password: &str) {
 
 /// `(username, password, totp)` do login pelo id — só leitura.
 pub fn login_triple(raw: &Value, id: &str) -> Option<(String, String, String)> {
-    raw.get("items")?
-        .as_array()?
-        .iter()
-        .find_map(|it| {
-            let same = it.get("id").and_then(Value::as_str) == Some(id);
-            if !same {
-                return None;
-            }
-            let login = it.get("login")?;
-            Some((
-                login.get("username").and_then(Value::as_str)?.to_string(),
-                login.get("password").and_then(Value::as_str)?.to_string(),
-                login
-                    .get("totp")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string(),
-            ))
-        })
+    raw.get("items")?.as_array()?.iter().find_map(|it| {
+        let same = it.get("id").and_then(Value::as_str) == Some(id);
+        if !same {
+            return None;
+        }
+        let login = it.get("login")?;
+        Some((
+            login.get("username").and_then(Value::as_str)?.to_string(),
+            login.get("password").and_then(Value::as_str)?.to_string(),
+            login
+                .get("totp")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+        ))
+    })
 }
 
 /// EDITA um item existente (por id) — mesma escrita conservadora do add: só
@@ -311,7 +312,14 @@ mod tests {
                           "login":{"username":"u","password":"p","uris":["https://a"],"totp":""}}]}"#,
         )
         .unwrap();
-        assert!(edit_login(&mut v, "x", "Novo", "user2", "pass2", "JBSWY3DPEHPK3PXP"));
+        assert!(edit_login(
+            &mut v,
+            "x",
+            "Novo",
+            "user2",
+            "pass2",
+            "JBSWY3DPEHPK3PXP"
+        ));
         let it = &v["items"][0];
         assert_eq!(it["name"], "Novo");
         assert_eq!(it["login"]["username"], "user2");

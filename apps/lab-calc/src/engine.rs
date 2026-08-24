@@ -198,9 +198,9 @@ fn tokenize(s: &str, ctx: &Ctx) -> Result<Vec<Tok>, String> {
                         expect_operand = false;
                     }
                     "ans" => {
-                        let v = ctx
-                            .ans
-                            .ok_or_else(|| "ans ainda não tem valor (faça uma conta)".to_string())?;
+                        let v = ctx.ans.ok_or_else(|| {
+                            "ans ainda não tem valor (faça uma conta)".to_string()
+                        })?;
                         out.push(Tok::Num(v));
                         expect_operand = false;
                     }

@@ -30,10 +30,19 @@ fn main() -> eframe::Result<()> {
         .map(PathBuf::from)
         .and_then(|p| p.canonicalize().ok());
 
+    // "Abrir com" = janela no tamanho REAL da imagem (header only — sem
+    // decode). ppp ainda é desconhecido aqui (points ≈ px em 100%); o
+    // primeiro update corrige a escala e clampa na tela.
+    let inner_size = initial_file
+        .as_ref()
+        .and_then(|p| image::image_dimensions(p).ok())
+        .map(|(w, h)| [w as f32, h as f32])
+        .unwrap_or([900.0, 640.0]);
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Lab Image")
-            .with_inner_size([900.0, 640.0]),
+            .with_inner_size(inner_size),
         ..Default::default()
     };
     eframe::run_native(
@@ -41,7 +50,8 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(move |cc| {
             theme::apply(&cc.egui_ctx, cfg.theme);
-            Ok(Box::new(ImageApp::new(cfg, initial_file)))
+            let opened_with_file = initial_file.is_some();
+            Ok(Box::new(ImageApp::new(cfg, initial_file, opened_with_file)))
         }),
     )
 }
@@ -84,14 +94,19 @@ fn spawn_job(job: Job, tx: Sender<Done>) {
                     info,
                 )
             });
-            let _ = tx.send(Done::Decode { path, result: result.map_err(|e| e.to_string()) });
+            let _ = tx.send(Done::Decode {
+                path,
+                result: result.map_err(|e| e.to_string()),
+            });
         }
         Job::Exif(path) => {
             let _ = tx.send(Done::Exif(img::exif_info(&path)));
         }
         Job::Export(src) => {
             let dst = src.with_extension("lab.png");
-            let _ = tx.send(Done::Export(img::export(&src, &dst, 90, None, 90).map(|_| dst)));
+            let _ = tx.send(Done::Export(
+                img::export(&src, &dst, 90, None, 90).map(|_| dst),
+            ));
         }
     });
 }
@@ -118,10 +133,16 @@ struct ImageApp {
     /// Se o app foi aberto com um arquivo via args, guardamos o path até
     /// a lista da pasta estar pronta (decode é async via channel).
     initial_file: Option<PathBuf>,
+    /// Interface visível (toolbar/rodapé). "Abrir com" abre limpa (só a
+    /// imagem); clique na imagem ou F traz de volta.
+    chrome: bool,
+    /// Ajuste único de escala/tamanho da janela após o primeiro frame
+    /// (corrige ppp != 1.0 e clampa imagens maiores que a tela).
+    window_fix: Option<[f32; 2]>,
 }
 
 impl ImageApp {
-    fn new(cfg: Config, initial_file: Option<PathBuf>) -> Self {
+    fn new(cfg: Config, initial_file: Option<PathBuf>, opened_with_file: bool) -> Self {
         Self {
             cfg,
             dir: String::new(),
@@ -136,7 +157,12 @@ impl ImageApp {
             pan: egui::Vec2::ZERO,
             fit: true,
             show_exif: false,
-            initial_file,
+            initial_file: initial_file.clone(),
+            chrome: !opened_with_file,
+            window_fix: initial_file
+                .as_ref()
+                .and_then(|p| image::image_dimensions(p).ok())
+                .map(|(w, h)| [w as f32, h as f32]),
         }
     }
 
@@ -188,6 +214,24 @@ impl eframe::App for ImageApp {
             }
         }
 
+        // Ajuste único da janela: o tamanho veio em px (points ≈ px só em
+        // 100%); com ppp real converte, e clampa em 90% do MONITOR
+        // (screen_rect no nativo é a janela, não a tela).
+        if let Some([w, h]) = self.window_fix.take() {
+            let ppp = ctx.pixels_per_point();
+            let screen = ctx
+                .input(|i| i.viewport().monitor_size)
+                .unwrap_or(egui::vec2(1920.0, 1080.0));
+            let mut w = w / ppp;
+            let mut h = h / ppp;
+            let s = (screen.x * 0.9 / w).min(screen.y * 0.9 / h);
+            if s < 1.0 {
+                w *= s;
+                h *= s;
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
+        }
+
         // Drena resultados das threads; `goto(0)` fica fora do borrow.
         let mut open_first = false;
         if let Some(rx) = &self.rx {
@@ -209,7 +253,10 @@ impl eframe::App for ImageApp {
                     _ => {}
                 }
             }
-            if matches!(rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Disconnected)) {
+            if matches!(
+                rx.try_recv(),
+                Err(std::sync::mpsc::TryRecvError::Disconnected)
+            ) {
                 self.rx = None;
             }
         }
@@ -227,18 +274,18 @@ impl eframe::App for ImageApp {
                                     i.size_bytes as f64 / 1e6
                                 );
                             }
-                            let tex = ctx.load_texture(
-                                "view",
-                                image,
-                                egui::TextureOptions::default(),
-                            );
+                            let tex =
+                                ctx.load_texture("view", image, egui::TextureOptions::default());
                             self.tex = Some((path, tex));
                         }
                         Err(e) => self.status = format!("⚠ {e}"),
                     }
                 }
             }
-            if matches!(rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Disconnected)) {
+            if matches!(
+                rx.try_recv(),
+                Err(std::sync::mpsc::TryRecvError::Disconnected)
+            ) {
                 self.decode_rx = None;
             }
         }
@@ -273,75 +320,91 @@ impl eframe::App for ImageApp {
                 }
             }
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && self.show_exif {
-            self.show_exif = false;
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if self.chrome && self.show_exif {
+                self.show_exif = false;
+            } else {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+            }
         }
+        // F = tela cheia sem interface (modelo viewer); 0 = encaixar.
         if ctx.input(|i| i.key_pressed(egui::Key::F)) {
+            let fs = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fs));
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Num0)) {
             self.fit = true;
+            self.pan = egui::Vec2::ZERO;
         }
 
-        egui::TopBottomPanel::top("topo").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.strong("Lab Image");
-                let n = self
-                    .idx
-                    .map(|i| format!("{}/{}", i + 1, self.files.len()))
-                    .unwrap_or_default();
-                ui.label(egui::RichText::new(n).small().weak());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .button("i")
-                        .on_hover_text("EXIF")
-                        .clicked()
-                    {
-                        self.show_exif = !self.show_exif;
-                    }
-                    if self.current().is_some()
-                        && ui
-                            .button("⤴")
-                            .on_hover_text("export girado (sem EXIF)")
-                            .clicked()
-                    {
-                        if let Some(p) = self.current() {
-                            let p = p.clone();
-                            self.request(Job::Export(p));
+        // Interface: toolbar/rodapé só quando `chrome`.
+        let chrome = self.chrome;
+        if chrome {
+            egui::TopBottomPanel::top("topo").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.strong("Lab Image");
+                    let n = self
+                        .idx
+                        .map(|i| format!("{}/{}", i + 1, self.files.len()))
+                        .unwrap_or_default();
+                    ui.label(egui::RichText::new(n).small().weak());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("i").on_hover_text("EXIF").clicked() {
+                            self.show_exif = !self.show_exif;
                         }
-                    }
-                    if lab_ui::settings_ui(ui, &mut self.cfg) {
-                        theme::apply(ctx, self.cfg.theme);
-                        let _ = config::save(APP_ID, &self.cfg);
-                    }
+                        if self.current().is_some()
+                            && ui
+                                .button("⤴")
+                                .on_hover_text("export girado (sem EXIF)")
+                                .clicked()
+                        {
+                            if let Some(p) = self.current() {
+                                let p = p.clone();
+                                self.request(Job::Export(p));
+                            }
+                        }
+                        if lab_ui::settings_ui(ui, &mut self.cfg) {
+                            theme::apply(ctx, self.cfg.theme);
+                            let _ = config::save(APP_ID, &self.cfg);
+                        }
+                    });
                 });
             });
-        });
+        }
 
-        egui::TopBottomPanel::bottom("rodape").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.dir)
-                        .hint_text(r"C:\...\fotos")
-                        .desired_width(f32::INFINITY),
-                );
-                if ui.button(i18n::t(self.cfg.lang, Key::Open)).clicked() {
-                    let d = self.dir.trim().to_string();
-                    if !d.is_empty() {
-                        self.request(Job::List(d));
+        if chrome {
+            egui::TopBottomPanel::bottom("rodape").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.dir)
+                            .hint_text(r"C:\...\fotos")
+                            .desired_width(f32::INFINITY),
+                    );
+                    if ui.button(i18n::t(self.cfg.lang, Key::Open)).clicked() {
+                        let d = self.dir.trim().to_string();
+                        if !d.is_empty() {
+                            self.request(Job::List(d));
+                        }
                     }
+                });
+                if !self.status.is_empty() {
+                    ui.label(egui::RichText::new(&self.status).small().weak());
                 }
             });
-            if !self.status.is_empty() {
-                ui.label(egui::RichText::new(&self.status).small().weak());
-            }
-        });
+        }
 
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.files.is_empty() {
-                ui.centered_and_justified(|ui| {
-                    ui.label(
-                        egui::RichText::new("abra uma pasta")
-                            .weak(),
-                    );
-                });
+                // Sem pasta e sem interface → clique mostra a toolbar
+                // (senão o usuário fica preso).
+                let resp = ui
+                    .centered_and_justified(|ui| {
+                        ui.label(egui::RichText::new("abra uma pasta").weak());
+                    })
+                    .response;
+                if resp.clicked() {
+                    self.chrome = true;
+                }
                 return;
             }
 
@@ -358,10 +421,7 @@ impl eframe::App for ImageApp {
                     let scaled = size * s;
                     (
                         s,
-                        egui::vec2(
-                            (avail.x - scaled.x) / 2.0,
-                            (avail.y - scaled.y) / 2.0,
-                        ),
+                        egui::vec2((avail.x - scaled.x) / 2.0, (avail.y - scaled.y) / 2.0),
                     )
                 } else {
                     (1.0, egui::Vec2::ZERO)
@@ -389,16 +449,17 @@ impl eframe::App for ImageApp {
                     self.pan += response.drag_delta();
                     self.fit = false;
                 }
+                // Clique simples (sem drag) alterna a interface.
+                if response.clicked() {
+                    self.chrome = !self.chrome;
+                }
                 if response.double_clicked() {
                     self.fit = true;
                     self.pan = egui::Vec2::ZERO;
                 }
 
                 let scale = base_scale * self.zoom;
-                let dest = egui::Rect::from_min_size(
-                    rect.min + base_off + self.pan,
-                    size * scale,
-                );
+                let dest = egui::Rect::from_min_size(rect.min + base_off + self.pan, size * scale);
                 let painter = ui.painter_at(rect);
                 painter.image(
                     tex.id(),
@@ -420,28 +481,24 @@ impl eframe::App for ImageApp {
                 .collapsible(true)
                 .resizable(false)
                 .anchor(egui::Align2::RIGHT_TOP, [-8.0, 8.0])
-                .show(ctx, |ui| {
-                    match &self.exif {
-                        Some(entries) if entries.is_empty() => {
-                            ui.label(egui::RichText::new("sem EXIF").weak());
-                        }
-                        Some(entries) => {
-                            egui::Grid::new("exif")
-                                .num_columns(2)
-                                .spacing([10.0, 4.0])
-                                .show(ui, |ui| {
-                                    for (k, v) in entries {
-                                        ui.label(
-                                            egui::RichText::new(k).small().weak(),
-                                        );
-                                        ui.label(v);
-                                        ui.end_row();
-                                    }
-                                });
-                        }
-                        None => {
-                            ui.spinner();
-                        }
+                .show(ctx, |ui| match &self.exif {
+                    Some(entries) if entries.is_empty() => {
+                        ui.label(egui::RichText::new("sem EXIF").weak());
+                    }
+                    Some(entries) => {
+                        egui::Grid::new("exif")
+                            .num_columns(2)
+                            .spacing([10.0, 4.0])
+                            .show(ui, |ui| {
+                                for (k, v) in entries {
+                                    ui.label(egui::RichText::new(k).small().weak());
+                                    ui.label(v);
+                                    ui.end_row();
+                                }
+                            });
+                    }
+                    None => {
+                        ui.spinner();
                     }
                 });
         }

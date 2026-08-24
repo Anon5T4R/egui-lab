@@ -346,7 +346,12 @@ impl eframe::App for MonitorApp {
                 p.text(
                     egui::pos2(rect.left() + 6.0, rect.center().y),
                     egui::Align2::LEFT_CENTER,
-                    format!("{mount}  {}/{} ({:.0}%)", fmt_gb(used), fmt_gb(total), pct * 100.0),
+                    format!(
+                        "{mount}  {}/{} ({:.0}%)",
+                        fmt_gb(used),
+                        fmt_gb(total),
+                        pct * 100.0
+                    ),
                     egui::FontId::proportional(11.0),
                     pal.text,
                 );
@@ -385,22 +390,24 @@ impl eframe::App for MonitorApp {
                     .striped(true)
                     .show(ui, |ui| {
                         // cabeçalho clicável (ordenação)
-                        let head = |ui: &mut egui::Ui,
-                                    col: SortCol,
-                                    label: &str,
-                                    app: &mut MonitorApp| {
-                            let mark = if app.sort == col {
-                                if app.sort_desc { " ▾" } else { " ▴" }
-                            } else {
-                                ""
+                        let head =
+                            |ui: &mut egui::Ui, col: SortCol, label: &str, app: &mut MonitorApp| {
+                                let mark = if app.sort == col {
+                                    if app.sort_desc {
+                                        " ▾"
+                                    } else {
+                                        " ▴"
+                                    }
+                                } else {
+                                    ""
+                                };
+                                if ui
+                                    .selectable_label(app.sort == col, format!("{label}{mark}"))
+                                    .clicked()
+                                {
+                                    app.toggle_sort(col);
+                                }
                             };
-                            if ui
-                                .selectable_label(app.sort == col, format!("{label}{mark}"))
-                                .clicked()
-                            {
-                                app.toggle_sort(col);
-                            }
-                        };
                         head(ui, SortCol::Name, t(Key::Name), self);
                         head(ui, SortCol::Pid, "PID", self);
                         head(ui, SortCol::Cpu, "CPU", self);

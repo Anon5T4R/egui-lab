@@ -7,7 +7,7 @@ pub mod i18n;
 pub mod theme;
 
 use config::Config;
-use i18n::{Lang, Key};
+use i18n::{Key, Lang};
 use theme::Theme;
 
 /// Desenha os combos de idioma + tema (canto de configurações comum aos apps).

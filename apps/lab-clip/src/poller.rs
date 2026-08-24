@@ -86,7 +86,7 @@ pub fn spawn() -> Receiver<ClipItem> {
                             if h != last_text {
                                 last_text = h;
                                 last_img = 0; // conteúdo novo: zera a outra classe
-                                // Receptor morto = app fechou: sair da thread.
+                                              // Receptor morto = app fechou: sair da thread.
                                 if tx
                                     .send(ClipItem {
                                         id: 0, // preenchido pelo history::insert
@@ -114,11 +114,7 @@ pub fn spawn() -> Receiver<ClipItem> {
                                     if tx
                                         .send(ClipItem {
                                             id: 0,
-                                            payload: Payload::Image(ImageItem {
-                                                png,
-                                                w,
-                                                h: hgt,
-                                            }),
+                                            payload: Payload::Image(ImageItem { png, w, h: hgt }),
                                             pinned: false,
                                         })
                                         .is_err()

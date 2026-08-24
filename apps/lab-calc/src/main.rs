@@ -220,7 +220,11 @@ impl eframe::App for CalcApp {
             }
 
             ui.add_space(10.0);
-            ui.label(egui::RichText::new(i18n::t(lang, Key::History)).small().weak());
+            ui.label(
+                egui::RichText::new(i18n::t(lang, Key::History))
+                    .small()
+                    .weak(),
+            );
 
             if self.history.is_empty() {
                 ui.label(egui::RichText::new(i18n::t(lang, Key::NoHistory)).weak());

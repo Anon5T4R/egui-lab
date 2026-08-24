@@ -71,14 +71,12 @@ fn remember_last_path(path: &str) {
     if let Some(dir) = p.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let _ = std::fs::write(
-        &p,
-        serde_json::json!({ "lastPath": path }).to_string(),
-    );
+    let _ = std::fs::write(&p, serde_json::json!({ "lastPath": path }).to_string());
 }
 
 fn last_path() -> Option<String> {
-    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(state_path()).ok()?).ok()?;
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(state_path()).ok()?).ok()?;
     v.get("lastPath")?.as_str().map(str::to_string)
 }
 
@@ -193,9 +191,9 @@ impl KeysApp {
         let Some(path) = last_path() else {
             return;
         };
-        let Ok(b64) = (|| {
-            keyring::Entry::new(KEYRING_SERVICE, &path).and_then(|e| e.get_password())
-        })() else {
+        let Ok(b64) =
+            (|| keyring::Entry::new(KEYRING_SERVICE, &path).and_then(|e| e.get_password()))()
+        else {
             return;
         };
         let Ok(key) = base64::engine::general_purpose::STANDARD.decode(b64) else {
@@ -388,12 +386,7 @@ impl KeysApp {
                 self.add_totp.trim(),
             ),
             None => {
-                vault::add_login(
-                    &mut next,
-                    &name,
-                    &self.add_user,
-                    &self.add_pass.clone(),
-                );
+                vault::add_login(&mut next, &name, &self.add_user, &self.add_pass.clone());
                 // add_login não tem campo totp — insere no item recém-criado
                 if !self.add_totp.trim().is_empty() {
                     let n = next["items"].as_array().map(Vec::len).unwrap_or(0);
@@ -690,7 +683,12 @@ impl KeysApp {
         });
     }
 
-    fn unlocked_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, t: &dyn Fn(Key) -> &'static str) {
+    fn unlocked_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        t: &dyn Fn(Key) -> &'static str,
+    ) {
         // Dados owned antes do UI (nenhum borrow de self.raw atravessa closures).
         let rows: Vec<(String, String, Option<String>, Option<String>, bool)> = self
             .items
@@ -734,16 +732,15 @@ impl KeysApp {
 
         if let Some(e) = &self.err {
             ui.label(
-                egui::RichText::new(format!("{}: {e}", t(Key::Error))).color(egui::Color32::LIGHT_RED),
+                egui::RichText::new(format!("{}: {e}", t(Key::Error)))
+                    .color(egui::Color32::LIGHT_RED),
             );
             ui.add_space(6.0);
         }
 
         let view: Vec<&(String, String, Option<String>, Option<String>, bool)> = rows
             .iter()
-            .filter(|(_, name, _, _, _)| {
-                needle.is_empty() || name.to_lowercase().contains(&needle)
-            })
+            .filter(|(_, name, _, _, _)| needle.is_empty() || name.to_lowercase().contains(&needle))
             .collect();
 
         if view.is_empty() {
@@ -810,10 +807,8 @@ impl KeysApp {
                                 .on_hover_text(t(Key::Copy))
                                 .clicked()
                             {
-                                if let Some((user, _, _)) = self
-                                    .raw
-                                    .as_ref()
-                                    .and_then(|r| vault::login_triple(r, id))
+                                if let Some((user, _, _)) =
+                                    self.raw.as_ref().and_then(|r| vault::login_triple(r, id))
                                 {
                                     // usuário não é segredo: cópia simples
                                     if arboard::Clipboard::new()
@@ -830,10 +825,8 @@ impl KeysApp {
                             .on_hover_text(t(Key::Copy))
                             .clicked()
                         {
-                            if let Some((_, pass, _)) = self
-                                .raw
-                                .as_ref()
-                                .and_then(|r| vault::login_triple(r, id))
+                            if let Some((_, pass, _)) =
+                                self.raw.as_ref().and_then(|r| vault::login_triple(r, id))
                             {
                                 if clipboard::copy_secret(pass).is_ok() {
                                     self.copied(name);
@@ -841,10 +834,8 @@ impl KeysApp {
                             }
                         }
                         if ui.small_button(t(Key::Edit)).clicked() {
-                            if let Some((user, pass, totp)) = self
-                                .raw
-                                .as_ref()
-                                .and_then(|r| vault::login_triple(r, id))
+                            if let Some((user, pass, totp)) =
+                                self.raw.as_ref().and_then(|r| vault::login_triple(r, id))
                             {
                                 self.form_edit_id = Some(id.clone());
                                 self.add_name = name.clone();

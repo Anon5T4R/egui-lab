@@ -16,14 +16,14 @@ pub enum Where {
 mod win {
     use super::Where;
     use std::path::{Path, PathBuf};
-    use windows::core::{GUID, Interface, PCWSTR};
+    use windows::core::{Interface, GUID, PCWSTR};
     use windows::Win32::Foundation::BOOL;
     use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_INPROC_SERVER,
-        COINIT_APARTMENTTHREADED, IPersistFile,
+        CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, IPersistFile,
+        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
     };
     use windows::Win32::UI::Shell::{
-        FOLDERID_Desktop, FOLDERID_Programs, IShellLinkW, KNOWN_FOLDER_FLAG, SHGetKnownFolderPath,
+        FOLDERID_Desktop, FOLDERID_Programs, IShellLinkW, SHGetKnownFolderPath, KNOWN_FOLDER_FLAG,
     };
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
@@ -42,9 +42,8 @@ mod win {
             Where::StartMenu => FOLDERID_Programs,
             Where::Desktop => FOLDERID_Desktop,
         };
-        let folder =
-            SHGetKnownFolderPath(&folder_guid, KNOWN_FOLDER_FLAG(0), None)
-                .map_err(|e| format!("pasta do sistema: {e}"))?;
+        let folder = SHGetKnownFolderPath(&folder_guid, KNOWN_FOLDER_FLAG(0), None)
+            .map_err(|e| format!("pasta do sistema: {e}"))?;
         let dir = PathBuf::from(folder.to_string().map_err(|e| e.to_string())?);
         CoTaskMemFree(Some(folder.as_ptr().cast()));
         Ok(dir)
@@ -170,12 +169,24 @@ mod nix {
 
 /// Cria o atalho com ícone; devolve o caminho do atalho criado.
 #[cfg(windows)]
-pub fn create(_app_id: &str, display: &str, exe: &Path, icon: &Path, r#where: Where) -> Result<PathBuf, String> {
+pub fn create(
+    _app_id: &str,
+    display: &str,
+    exe: &Path,
+    icon: &Path,
+    r#where: Where,
+) -> Result<PathBuf, String> {
     win::create(exe, icon, display, r#where)
 }
 
 #[cfg(not(windows))]
-pub fn create(app_id: &str, display: &str, exe: &Path, icon: &Path, r#where: Where) -> Result<PathBuf, String> {
+pub fn create(
+    app_id: &str,
+    display: &str,
+    exe: &Path,
+    icon: &Path,
+    r#where: Where,
+) -> Result<PathBuf, String> {
     nix::create(app_id, exe, icon, display, r#where)
 }
 

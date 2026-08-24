@@ -160,16 +160,14 @@ impl ClipApp {
             {
                 use tray_icon::menu::MenuEvent;
                 let tx = tray_tx.clone();
-                MenuEvent::set_event_handler(Some(move |ev: MenuEvent| {
-                    match ev.id.0.as_str() {
-                        "show" => {
-                            let _ = tx.send(TrayCmd::ShowHide);
-                        }
-                        "quit" => {
-                            let _ = tx.send(TrayCmd::Quit);
-                        }
-                        _ => {}
+                MenuEvent::set_event_handler(Some(move |ev: MenuEvent| match ev.id.0.as_str() {
+                    "show" => {
+                        let _ = tx.send(TrayCmd::ShowHide);
                     }
+                    "quit" => {
+                        let _ = tx.send(TrayCmd::Quit);
+                    }
+                    _ => {}
                 }));
             }
             t
@@ -336,9 +334,7 @@ impl eframe::App for ClipApp {
                 ctx.input(|i| {
                     for ev in &i.events {
                         if let egui::Event::Key {
-                            key,
-                            pressed: true,
-                            ..
+                            key, pressed: true, ..
                         } = ev
                         {
                             if let Some(code) = prefs::egui_key_to_code(*key) {
@@ -497,13 +493,11 @@ impl eframe::App for ClipApp {
                                         #[cfg(windows)]
                                         winctl::hide();
                                     }
-                                    if ui.small_button("⧉").on_hover_text(t(Key::Copy)).clicked() {
+                                    if ui.small_button("⧉").on_hover_text(t(Key::Copy)).clicked()
+                                    {
                                         Self::copy_out_text(full);
                                     }
-                                    if ui
-                                        .small_button("🗑")
-                                        .on_hover_text(t(Key::Delete))
-                                        .clicked()
+                                    if ui.small_button("🗑").on_hover_text(t(Key::Delete)).clicked()
                                     {
                                         let i = *idx;
                                         let id = self.items[i].id;
@@ -513,7 +507,10 @@ impl eframe::App for ClipApp {
                                 });
                             }
                             RowView::Image {
-                                idx, id, pinned, img,
+                                idx,
+                                id,
+                                pinned,
+                                img,
                             } => {
                                 ui.horizontal(|ui| {
                                     if ui
@@ -536,7 +533,8 @@ impl eframe::App for ClipApp {
                                             let size =
                                                 [rgba.width() as usize, rgba.height() as usize];
                                             let color = egui::ColorImage::from_rgba_unmultiplied(
-                                                size, rgba.as_raw(),
+                                                size,
+                                                rgba.as_raw(),
                                             );
                                             self.textures.insert(
                                                 *id,
@@ -550,9 +548,7 @@ impl eframe::App for ClipApp {
                                     }
                                     if let Some(tex) = self.textures.get(id) {
                                         if ui
-                                            .add(
-                                                egui::Image::from_texture(tex).max_width(120.0),
-                                            )
+                                            .add(egui::Image::from_texture(tex).max_width(120.0))
                                             .on_hover_text(t(Key::Copy))
                                             .clicked()
                                         {
@@ -561,13 +557,11 @@ impl eframe::App for ClipApp {
                                             winctl::hide();
                                         }
                                     }
-                                    if ui.small_button("⧉").on_hover_text(t(Key::Copy)).clicked() {
+                                    if ui.small_button("⧉").on_hover_text(t(Key::Copy)).clicked()
+                                    {
                                         Self::copy_out_image(img);
                                     }
-                                    if ui
-                                        .small_button("🗑")
-                                        .on_hover_text(t(Key::Delete))
-                                        .clicked()
+                                    if ui.small_button("🗑").on_hover_text(t(Key::Delete)).clicked()
                                     {
                                         let i = *idx;
                                         let removed = self.items.remove(i);
@@ -605,14 +599,15 @@ impl eframe::App for ClipApp {
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
-                            .add_enabled(
-                                textos + imagens > 0,
-                                egui::Button::new(t(Key::Clear)),
-                            )
+                            .add_enabled(textos + imagens > 0, egui::Button::new(t(Key::Clear)))
                             .clicked()
                         {
-                            let pinned: Vec<u64> =
-                                self.items.iter().filter(|i| i.pinned).map(|i| i.id).collect();
+                            let pinned: Vec<u64> = self
+                                .items
+                                .iter()
+                                .filter(|i| i.pinned)
+                                .map(|i| i.id)
+                                .collect();
                             self.textures.retain(|id, _| pinned.contains(id));
                             history::clear_unpinned(&mut self.items);
                         }
