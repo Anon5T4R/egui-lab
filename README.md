@@ -160,6 +160,15 @@ leitura: o terreno onde o webview ganha com folga.
     por frame (resize/DPI de graça). Playlist virou painel inferior fixo
     (140px) entre controles e vídeo. Linux mantém janela própria do mpv.
     v0.3.6.
+15. **Onda 15 (feita — modelo viewer):** image e player viram
+    "visualizadores": janela do tamanho do conteúdo (image lê px reais
+    no boot; player pega dims via IPC do mpv), **F = tela cheia sem
+    interface**, **clique = interface** (WndProc do child no Windows,
+    ButtonPress do X11 no Linux — o child do vídeo engole os cliques do
+    egui, captura obrigatória). Player embute vídeo no Linux (child X11
+    via x11rb + XID do raw-window-handle, força XWayland; mpv do PATH).
+    Clamp corrigido: `monitor_size`, não `screen_rect` (= janela no
+    eframe nativo). v0.4.0.
 
 ## Releases
 
