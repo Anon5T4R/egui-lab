@@ -27,3 +27,10 @@ base64.workspace = true
 # Flag ExcludeClipboardContentFromMonitorProcessing ao copiar senha
 clipboard-win = "5.4"
 rfd.workspace = true
+# Bandeja só no Windows (mesma política do lab-clip: no Linux o tray-icon
+# puxaria muda→gtk3 e engordaria o AppImage).
+tray-icon.workspace = true
+# Controle da janela fora do ciclo de pintura — janela oculta não recebe
+# WM_PAINT no Windows, o eframe congela; a thread da bandeja acorda a
+# janela com ShowWindow direto (ver winctl.rs).
+windows = { version = "0.58", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }

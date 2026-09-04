@@ -4,6 +4,9 @@
 //! Onda 4: TOTP ao vivo (código + contagem), **desbloqueio rápido** (chave
 //! derivada no cofre do SO via keyring — mesmo desenho do oficial, opt-in),
 //! **editar** item e **excluir** (lixeira lógica, `deletedAt`).
+//! Onda 5: **bandeja** (Windows): o X esconde pra bandeja; "Sair" no menu
+//! fecha de verdade. Os handlers do tray-icon vivem numa thread própria
+//! (janela oculta congela o update — ver `winctl.rs`), como no lab-clip.
 //!
 //! Nota: o Argon2 roda na thread da UI (~300 ms de freeze no destrancar) — o
 //! oficial usa command async do Tauri. Aceitável no lab; anotado como achado.
@@ -15,14 +18,32 @@ mod crypto;
 mod totp;
 mod vault;
 
+#[cfg(windows)]
+mod winctl;
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 use eframe::egui;
 use lab_ui::config::{self, Config};
 use lab_ui::i18n::{self, Key};
 use lab_ui::theme;
 use zeroize::Zeroizing;
 
+#[cfg(windows)]
+use tray_icon::menu::{Menu, MenuItem};
+#[cfg(windows)]
+use tray_icon::{TrayIcon, TrayIconBuilder};
+
 const APP_ID: &str = "lab-keys";
 const KEYRING_SERVICE: &str = "LabKeys";
+
+/// Comando vindo da bandeja (thread própria → handlers do tray-icon).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TrayCmd {
+    ShowHide,
+    Quit,
+}
 
 fn main() -> eframe::Result<()> {
     let cfg = config::load(APP_ID);
@@ -80,6 +101,128 @@ fn last_path() -> Option<String> {
     v.get("lastPath")?.as_str().map(str::to_string)
 }
 
+// ── bandeja (Windows) ──────────────────────────────────────────────────────
+
+/// Sobe a bandeja + a thread que atende os comandos dela. Devolve o `TrayIcon`
+/// (que o app segura vivo) e a flag de quit lida no `update`.
+///
+/// A thread é obrigatória: com a janela oculta o eframe congela (sem WM_PAINT
+/// não há frame), então os handlers do tray-icon não podem depender do
+/// `update` — mostram/escondem via `winctl` (SO direto). Encerrar é sempre
+/// "mostrar + flag de quit": o update, com a janela visível, faz o
+/// `ViewportCommand::Close` — caminho limpo do winit 0.30.
+#[cfg(windows)]
+fn spawn_tray() -> (Option<TrayIcon>, Arc<AtomicBool>) {
+    let (tx, rx) = std::sync::mpsc::channel::<TrayCmd>();
+    let quit = Arc::new(AtomicBool::new(false));
+
+    let show = MenuItem::with_id("show", "Mostrar/Ocultar", true, None);
+    let quit_item = MenuItem::with_id("quit", "Sair", true, None);
+    let menu = Menu::new();
+    let _ = menu.append(&show);
+    let _ = menu.append(&quit_item);
+    let tray = TrayIconBuilder::new()
+        .with_menu(Box::new(menu))
+        .with_tooltip("Lab Keys")
+        .with_icon(tray_icon().expect("ícone rgba"))
+        .build();
+
+    let tray = match tray {
+        Ok(t) => {
+            {
+                use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
+                let tx = tx.clone();
+                tray_icon::TrayIconEvent::set_event_handler(Some(move |ev: TrayIconEvent| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = ev
+                    {
+                        let _ = tx.send(TrayCmd::ShowHide);
+                    }
+                }));
+            }
+            {
+                use tray_icon::menu::MenuEvent;
+                let tx = tx.clone();
+                MenuEvent::set_event_handler(Some(move |ev: MenuEvent| match ev.id.0.as_str() {
+                    "show" => {
+                        let _ = tx.send(TrayCmd::ShowHide);
+                    }
+                    "quit" => {
+                        let _ = tx.send(TrayCmd::Quit);
+                    }
+                    _ => {}
+                }));
+            }
+            Some(t)
+        }
+        Err(e) => {
+            // Sem bandeja o app segue abrindo normal (o X fecha de verdade).
+            eprintln!("bandeja: não deu para criar: {e}");
+            None
+        }
+    };
+
+    let quit_flag = quit.clone();
+    std::thread::Builder::new()
+        .name("keys-tray".into())
+        .spawn(move || {
+            while let Ok(cmd) = rx.recv() {
+                match cmd {
+                    TrayCmd::ShowHide => {
+                        if winctl::is_visible() {
+                            winctl::hide();
+                        } else {
+                            winctl::show();
+                        }
+                    }
+                    TrayCmd::Quit => {
+                        quit_flag.store(true, Ordering::Relaxed);
+                        // Janela VISÍVEL primeiro — o update precisa rodar pra
+                        // encerrar pelo caminho limpo (Close).
+                        winctl::show();
+                    }
+                }
+            }
+        })
+        .expect("spawn keys-tray");
+
+    (tray, quit)
+}
+
+/// Ícone 32×32 gerado em código (lab não carrega assets): chave — cabeça
+/// redonda + haste com dente, nas cores da suíte.
+#[cfg(windows)]
+fn tray_icon() -> Option<tray_icon::Icon> {
+    let (w, h) = (32u32, 32u32);
+    let mut rgba = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            // círculo da cabeça (centro 11,13, raio 7) — preenchido com furo (raio 3)
+            let dx = x as i32 - 11;
+            let dy = y as i32 - 13;
+            let dist2 = dx * dx + dy * dy;
+            let head = dist2 <= 49 && dist2 >= 9;
+            // haste horizontal saindo da cabeça, com dente pra baixo
+            let shaft = y >= 12 && y <= 14 && x >= 17 && x < w - 3;
+            let tooth = x >= 22 && x <= 24 && y >= 12 && y <= 19;
+            let (r, g, b, a) = if head || shaft || tooth {
+                (90, 50, 70, 255)
+            } else {
+                (0, 0, 0, 0)
+            };
+            let i = ((y * w + x) * 4) as usize;
+            rgba[i] = r;
+            rgba[i + 1] = g;
+            rgba[i + 2] = b;
+            rgba[i + 3] = a;
+        }
+    }
+    tray_icon::Icon::from_rgba(rgba, w, h).ok()
+}
+
 struct KeysApp {
     cfg: Config,
     // trancado
@@ -105,6 +248,12 @@ struct KeysApp {
     delete_ask: Option<(String, String)>,
     // feedback "copiado"
     copied_hint: Option<(String, std::time::Instant)>,
+    /// Viva enquanto o app viver: derruba a bandeja no drop.
+    #[cfg(windows)]
+    _tray: Option<TrayIcon>,
+    /// "Sair" da bandeja: o update responde com `ViewportCommand::Close`
+    /// (o único caminho que encerra de verdade).
+    quit: Arc<AtomicBool>,
 }
 
 impl KeysApp {
@@ -129,7 +278,16 @@ impl KeysApp {
             add_totp: String::new(),
             delete_ask: None,
             copied_hint: None,
+            #[cfg(windows)]
+            _tray: None,
+            quit: Arc::new(AtomicBool::new(false)),
         };
+        #[cfg(windows)]
+        {
+            let (tray, quit) = spawn_tray();
+            app._tray = tray;
+            app.quit = quit;
+        }
         app.path = last_path().unwrap_or_default();
         app.quick_ativa = app.path_has_stored_key();
         app.try_quick_unlock();
@@ -432,9 +590,26 @@ impl eframe::App for KeysApp {
         let lang = self.cfg.lang;
         let t = |k: Key| i18n::t(lang, k);
 
-        // Regra do oficial: trancar ao ocultar/minimizar a janela.
-        if ctx.input(|i| i.viewport().minimized.unwrap_or(false)) {
-            self.lock();
+        // Bandeja (Windows): descobre o HWND o quanto antes (a thread do tray
+        // precisa dele pra ShowWindow com a janela oculta).
+        #[cfg(windows)]
+        winctl::discover();
+
+        // "Sair" da bandeja: encerra pelo caminho limpo, com a janela visível.
+        if self.quit.load(Ordering::Relaxed) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+
+        // Fechar (X) minimiza pra bandeja — SÓ no Windows, onde há bandeja.
+        // (No Linux o X fecha de verdade.) Sem lock ao esconder: o cofre fica
+        // destrancado na memória (decisão do lab — PC da própria pessoa).
+        #[cfg(windows)]
+        if ctx.input(|i| i.viewport().close_requested()) {
+            let quitting = self.quit.load(Ordering::Relaxed);
+            if !quitting {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                winctl::hide();
+            }
         }
 
         // TOTP visível → repaint pra contagem andar (barato: 2×/s).
