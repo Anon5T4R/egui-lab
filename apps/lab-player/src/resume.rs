@@ -37,7 +37,8 @@ pub fn save(r: &Resume) {
 
 /// Grava a posição de `media` com cap LRU (menos recente = posição mais
 /// antiga no mapa — mantemos por tempo de inserção implícito: remove o
-/// primeiro excedente).
+/// primeiro excedente). Só MEMÓRIA — persistir é com `save` (o chamador
+/// decide quando tocar o disco; write na UI thread a cada tick era stutter).
 pub fn remember(r: &mut Resume, media: &str, secs: f64) {
     r.positions.insert(media.to_string(), secs);
     while r.positions.len() > 200 {
@@ -45,7 +46,6 @@ pub fn remember(r: &mut Resume, media: &str, secs: f64) {
             r.positions.remove(&oldest);
         }
     }
-    save(r);
 }
 
 pub fn position_of(r: &Resume, media: &str) -> Option<f64> {

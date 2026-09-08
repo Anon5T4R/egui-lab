@@ -8,3 +8,12 @@ license.workspace = true
 egui.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# Area util do monitor (SPI_GETWORKAREA + taskbar auto-hide) pro clamp
+# das janelas "no tamanho do conteudo" (workarea.rs).
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+] }

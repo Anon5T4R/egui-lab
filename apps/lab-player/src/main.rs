@@ -11,107 +11,16 @@ mod mpv_setup;
 mod resume;
 
 use std::sync::mpsc::{Receiver, Sender};
+use std::time::{Duration, Instant};
 
 use eframe::egui;
 use lab_ui::config::{self, Config};
 use lab_ui::i18n::{self, Key};
 use lab_ui::theme;
+use lab_ui::workarea::fit_to_work_area;
 use mpv::{Cmd, Event};
 
 const APP_ID: &str = "lab-player";
-
-/// Área útil do monitor em POINTS (tamanho, origem) — o espaço que a
-/// taskbar NÃO come. Windows: `SPI_GETWORKAREA` ∪ strip docked da taskbar
-/// auto-hide (escondida, o SPI devolve a tela inteira — mas o espaço que
-/// ela ocupa ao aparecer é real). Outros: 90% do monitor.
-fn work_area(ctx: &egui::Context) -> (egui::Vec2, egui::Pos2) {
-    #[cfg(windows)]
-    {
-        use windows::Win32::Foundation::RECT;
-        use windows::Win32::UI::Shell::{
-            ABM_GETSTATE, ABM_GETTASKBARPOS, ABE_BOTTOM, ABE_LEFT, ABE_RIGHT, ABE_TOP,
-            APPBARDATA, SHAppBarMessage,
-        };
-        use windows::Win32::UI::WindowsAndMessaging::{
-            FindWindowW, SystemParametersInfoW, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
-            SPI_GETWORKAREA,
-        };
-
-        let ppp = ctx.pixels_per_point();
-        let monitor = ctx
-            .input(|i| i.viewport().monitor_size)
-            .unwrap_or(egui::vec2(1920.0, 1080.0))
-            * ppp; // px
-
-        let mut wa = RECT::default();
-        let ok = unsafe {
-            SystemParametersInfoW(
-                SPI_GETWORKAREA,
-                0,
-                Some(&mut wa as *mut RECT as *mut core::ffi::c_void),
-                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
-            )
-            .is_ok()
-        };
-        if !ok {
-            return (
-                egui::vec2(monitor.x / ppp * 0.9, monitor.y / ppp * 0.9),
-                egui::pos2(0.0, 0.0),
-            );
-        }
-
-        unsafe {
-            let tray = FindWindowW(
-                windows::core::PCWSTR::from_raw(
-                    "Shell_TrayWnd\0".encode_utf16().collect::<Vec<_>>().as_ptr(),
-                ),
-                windows::core::PCWSTR::null(),
-            );
-            if let Ok(tray) = tray {
-                let mut abd = APPBARDATA {
-                    cbSize: std::mem::size_of::<APPBARDATA>() as u32,
-                    hWnd: tray,
-                    ..Default::default()
-                };
-                let state = SHAppBarMessage(ABM_GETSTATE, &mut abd);
-                if state & 1 != 0 && SHAppBarMessage(ABM_GETTASKBARPOS, &mut abd) != 0 {
-                    // ABS_AUTOHIDE: desconta o strip docked da taskbar.
-                    let strip = &abd.rc;
-                    let (w, h) = (monitor.x as i32, monitor.y as i32);
-                    let eff = match abd.uEdge {
-                        e if e == ABE_LEFT => RECT { left: strip.right, top: 0, right: w, bottom: h },
-                        e if e == ABE_TOP => RECT { left: 0, top: strip.bottom, right: w, bottom: h },
-                        e if e == ABE_RIGHT => RECT { left: 0, top: 0, right: strip.left, bottom: h },
-                        e if e == ABE_BOTTOM => RECT { left: 0, top: 0, right: w, bottom: strip.top },
-                        _ => wa,
-                    };
-                    return (
-                        egui::vec2(
-                            (eff.right - eff.left) as f32 / ppp,
-                            (eff.bottom - eff.top) as f32 / ppp,
-                        ),
-                        egui::pos2(eff.left as f32 / ppp, eff.top as f32 / ppp),
-                    );
-                }
-            }
-        }
-
-        (
-            egui::vec2(
-                (wa.right - wa.left) as f32 / ppp,
-                (wa.bottom - wa.top) as f32 / ppp,
-            ),
-            egui::pos2(wa.left as f32 / ppp, wa.top as f32 / ppp),
-        )
-    }
-    #[cfg(not(windows))]
-    {
-        let m = ctx
-            .input(|i| i.viewport().monitor_size)
-            .unwrap_or(egui::vec2(1920.0, 1080.0));
-        (m * 0.9, egui::pos2(m.x * 0.05, m.y * 0.05))
-    }
-}
 
 /// Extensões aceitas na playlist (o filtro do diálogo, do drag-drop e dos args).
 const MEDIA_EXTS: &[&str] = &[
@@ -180,8 +89,20 @@ struct PlayerApp {
     /// Embed descartado (sessão sem X11) — não tenta mais, mpv em janela
     /// própria.
     embed_dead: bool,
-    /// Tentativas de criar o embed (limite pra não girar pra sempre).
-    embed_tries: u32,
+    /// Tentativas de criar o embed: deadline por TEMPO (contar frames
+    /// mente — com repaint adaptativo o frame é esparso).
+    embed_deadline: Option<Instant>,
+    /// Último tamanho de janela aplicado por Dims (dedupe: mpv manda um
+    /// property-change POR EIXO — sem isso são dois resizes por vídeo).
+    placed_size: Option<[f32; 2]>,
+    /// Seek bar em drag (o valor vive aqui — reinicializar do `time` a
+    /// cada frame faz o slider brigar com o playback).
+    seek_drag: Option<f64>,
+    /// Listagem de "+ pasta" rodando fora da UI thread (read_dir em pasta
+    /// de rede/nuvem trava a janela — mesma lentidão do Explorer).
+    dir_rx: Option<Receiver<Result<Vec<String>, String>>>,
+    /// Resume com mudanças ainda não persistidas.
+    resume_dirty: bool,
     /// Interface visível (controles/playlist). Escondida enquanto o vídeo
     /// roda — clique ou F traz de volta.
     chrome: bool,
@@ -257,7 +178,11 @@ impl PlayerApp {
             initial_play,
             embed: None,
             embed_dead: false,
-            embed_tries: 0,
+            embed_deadline: Some(Instant::now() + Duration::from_secs(3)),
+            placed_size: None,
+            seek_drag: None,
+            dir_rx: None,
+            resume_dirty: false,
             chrome: true,
             video_size: None,
         }
@@ -267,6 +192,9 @@ impl PlayerApp {
         let Some(path) = self.playlist.files.get(i).cloned() else {
             return;
         };
+        // Persiste o progresso da faixa anterior antes de trocar (o
+        // checkpoint periódico é só em memória — ver Event::Time).
+        self.flush_resume();
         let r = resume::position_of(&self.resume, &path);
         let wid = self.embed.as_ref().map(|e| e.child_handle());
         let _ = self.cmd_tx.send(Cmd::Open {
@@ -302,6 +230,15 @@ impl PlayerApp {
 
     fn mpv_ready(&self) -> bool {
         self.mpv_check.is_none()
+    }
+
+    /// Escreve o resume.json em disco (fora do caminho quente da UI —
+    /// chamar em troca de faixa/fim/exit; o tick de 5 s é só memória).
+    fn flush_resume(&mut self) {
+        if self.resume_dirty {
+            resume::save(&self.resume);
+            self.resume_dirty = false;
+        }
     }
 }
 
@@ -339,16 +276,37 @@ impl eframe::App for PlayerApp {
 
         // Garante o child de vídeo (Windows: HWND por título; Linux: XID
         // via raw-window-handle/X11). None pode ser "ainda não" (janela
-        // não nasceu) ou "impossível" (Wayland puro) — tenta por uns 2 s
+        // não nasceu) ou "impossível" (Wayland puro) — tenta por uns 3 s
+        // (tempo, não frames: com repaint adaptativo o frame é esparso)
         // e desiste.
         if self.embed.is_none() && !self.embed_dead {
             if let Some(e) = embed::VideoEmbed::new("Lab Player", frame) {
                 self.embed = Some(e);
-                self.embed_tries = 0;
-            } else if self.embed_tries > 120 {
+                self.embed_deadline = None;
+            } else if self
+                .embed_deadline
+                .map(|d| Instant::now() >= d)
+                .unwrap_or(false)
+            {
                 self.embed_dead = true;
             } else {
-                self.embed_tries += 1;
+                ctx.request_repaint_after(Duration::from_millis(100));
+            }
+        }
+
+        // Listagem de "+ pasta" chegou (rodou fora da UI thread).
+        if let Some(rx) = &self.dir_rx {
+            if let Ok(result) = rx.try_recv() {
+                match result {
+                    Ok(files) => {
+                        self.playlist.files.extend(files);
+                        resume::save_playlist(&self.playlist);
+                    }
+                    Err(e) => self.status = format!("⚠ {e}"),
+                }
+                self.dir_rx = None;
+            } else {
+                ctx.request_repaint_after(Duration::from_millis(150));
             }
         }
 
@@ -392,10 +350,13 @@ impl eframe::App for PlayerApp {
                 Event::Time(t, d) => {
                     if !t.is_nan() {
                         self.time = t;
-                        // Salva o resume a cada ~5 s (barato: 200 entradas).
+                        // Checkpoint em MEMÓRIA a cada ~5 s (o disco é
+                        // tocado só em troca de faixa/fim/saída — write
+                        // na UI thread a cada 5 s era stutter).
                         if let (Some(i), true) = (self.idx, (t.trunc() % 5.0) < 0.1) {
                             if let Some(p) = self.playlist.files.get(i) {
                                 resume::remember(&mut self.resume, p, t);
+                                self.resume_dirty = true;
                             }
                         }
                     }
@@ -414,41 +375,17 @@ impl eframe::App for PlayerApp {
                     }
                     // Janela do tamanho do vídeo (só com interface oculta —
                     // com painéis o conteúdo se reorganiza e o resize seria
-                    // redundante). Clamp na ÁREA ÚTIL (taskbar descontada)
-                    // e centralização.
+                    // redundante). Dedupe: só quando os DOIS eixos chegaram
+                    // E mudaram em relação ao último aplicado (mpv re-envia
+                    // width/height a cada arquivo).
                     let [vw, vh] = *size;
                     let fullscreen = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
-                    if vw > 0.0 && vh > 0.0 && !self.chrome && !self.embed_dead && !fullscreen {
-                        let ppp = ctx.pixels_per_point();
-                        let (avail, origin) = work_area(ctx);
-                        // Chrome da janela medido do viewport real — o
-                        // OUTER inteiro tem que caber na área útil.
-                        let (cx, cy) = ctx.input(|i| {
-                            let v = i.viewport();
-                            match (v.outer_rect, v.inner_rect) {
-                                (Some(o), Some(n)) => (
-                                    (o.width() - n.width()).max(0.0),
-                                    (o.height() - n.height()).max(0.0),
-                                ),
-                                _ => (0.0, 40.0),
-                            }
-                        });
-                        let mut w = vw / ppp;
-                        let mut h = vh / ppp;
-                        let s = ((avail.x - cx) / w).min((avail.y - cy) / h);
-                        if s < 1.0 {
-                            w *= s;
-                            h *= s;
-                        }
-                        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(
-                            egui::vec2(w, h),
-                        ));
-                        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(
-                            egui::pos2(
-                                origin.x + (avail.x - (w + cx)) / 2.0,
-                                origin.y + (avail.y - (h + cy)) / 2.0,
-                            ),
-                        ));
+                    let complete = vw > 0.0 && vh > 0.0 && Some([vw, vh]) != self.placed_size;
+                    if complete && !self.chrome && !self.embed_dead && !fullscreen {
+                        self.placed_size = Some([vw, vh]);
+                        let (inner, pos) = fit_to_work_area(ctx, vw, vh);
+                        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(inner));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
                     }
                 }
                 Event::EndFile => ended = true,
@@ -456,6 +393,7 @@ impl eframe::App for PlayerApp {
                     self.status = "mpv fechado".into();
                     self.idx = None;
                     self.now.clear();
+                    self.flush_resume();
                     // Sem vídeo → interface de volta (usuário precisa dos
                     // botões pra escolher outra coisa).
                     self.chrome = true;
@@ -509,9 +447,17 @@ impl eframe::App for PlayerApp {
             }
         }
 
-        // Motor vivo → frames rápidos (seek bar).
+        // Repaint adaptativo: os eventos do motor chegam por canal (só
+        // são drenados num frame), então tocando precisa de ticks — mas
+        // interface oculta não tem seek bar pra animar, e pausado não
+        // tem progresso: 120 ms vira 400 ms nos dois casos.
         if self.idx.is_some() {
-            ctx.request_repaint_after(std::time::Duration::from_millis(120));
+            let ms = if self.chrome && !self.paused {
+                120
+            } else {
+                400
+            };
+            ctx.request_repaint_after(Duration::from_millis(ms));
         }
 
         // Interface (topo/controles/playlist) só quando `chrome` — tocando,
@@ -563,16 +509,24 @@ impl eframe::App for PlayerApp {
                             });
                     });
                 });
-                // Seek bar.
+                // Seek bar. Durante o drag o valor vive em `seek_drag` —
+                // reinicializar do `time` a cada frame fazia o slider
+                // brigar com os eventos de progresso do mpv.
                 let playing = self.idx.is_some() && self.mpv_ready();
-                let mut t = self.time;
+                let mut t = self.seek_drag.unwrap_or(self.time);
                 let slider = ui.add_enabled(
                     playing,
                     egui::Slider::new(&mut t, 0.0..=self.duration.max(1.0)).show_value(false),
                 );
-                if slider.drag_stopped() && t != self.time {
-                    let _ = self.cmd_tx.send(Cmd::SeekAbsolute(t));
-                    self.time = t;
+                if slider.dragged() {
+                    self.seek_drag = Some(t);
+                }
+                if slider.drag_stopped() {
+                    self.seek_drag = None;
+                    if t != self.time {
+                        let _ = self.cmd_tx.send(Cmd::SeekAbsolute(t));
+                        self.time = t;
+                    }
                 }
                 if !self.status.is_empty() {
                     ui.label(egui::RichText::new(&self.status).small().weak());
@@ -601,10 +555,15 @@ impl eframe::App for PlayerApp {
                             }
                             if ui.button("+ pasta").clicked() {
                                 if let Some(dir) = pick_dir() {
-                                    if let Ok(files) = list_media(&dir) {
-                                        self.playlist.files.extend(files);
-                                        resume::save_playlist(&self.playlist);
-                                    }
+                                    // Fora da UI thread: read_dir em pasta
+                                    // de rede/nuvem (OneDrive) tem a MESMA
+                                    // lentidão do Explorer — na UI thread
+                                    // travava a janela inteira.
+                                    let (tx, rx) = std::sync::mpsc::channel();
+                                    std::thread::spawn(move || {
+                                        let _ = tx.send(list_media(&dir));
+                                    });
+                                    self.dir_rx = Some(rx);
                                 }
                             }
                             if ui
@@ -621,11 +580,13 @@ impl eframe::App for PlayerApp {
                         });
                     });
                     egui::ScrollArea::vertical().show(ui, |ui| {
-                        for (i, f) in self.playlist.files.clone().iter().enumerate() {
-                            let name = std::path::Path::new(f)
+                        // Sem clone por frame: só os índices (a playlist
+                        // inteira era clonada a cada repaint).
+                        for i in 0..self.playlist.files.len() {
+                            let name = std::path::Path::new(&self.playlist.files[i])
                                 .file_name()
                                 .map(|n| n.to_string_lossy().into_owned())
-                                .unwrap_or_else(|| f.clone());
+                                .unwrap_or_else(|| self.playlist.files[i].clone());
                             let is_now = self.idx == Some(i);
                             if ui.selectable_label(is_now, &name).clicked() && self.mpv_ready() {
                                 self.play(i);
@@ -673,6 +634,11 @@ impl eframe::App for PlayerApp {
             );
             e.set_visible(self.idx.is_some() && self.mpv_ready());
         }
+    }
+
+    /// Fechou o app no meio do vídeo: persiste o último checkpoint.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.flush_resume();
     }
 }
 

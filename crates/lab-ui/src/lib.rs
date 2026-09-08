@@ -5,6 +5,7 @@
 pub mod config;
 pub mod i18n;
 pub mod theme;
+pub mod workarea;
 
 use config::Config;
 use i18n::{Key, Lang};

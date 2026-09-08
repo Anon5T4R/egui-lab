@@ -177,7 +177,32 @@ leitura: o terreno onde o webview ganha com folga.
     — o strip que ela come ao aparecer é real), então `ABM_GETTASKBARPOS`
     desconta o strip docked; e o chrome da janela (outer−inner do
     viewport) entra na conta pro OUTER inteiro caber (title bar não invade
-    a taskbar). Player idem no resize por Dims. v0.4.1.
+    a taskbar).     Player idem no resize por Dims. v0.4.1.
+17. **Onda 17 (feita — fluidez image/player):** caçada a bugs de
+    performance + dívida técnica, `v0.5.0`:
+    - **lab-image**: **(a)** decode sem repaint — só o canal genérico
+      (rx) agendava repaint; se o EXIF terminasse antes do decode, o app
+      ficava idle e a imagem só aparecia ao mover o mouse (o "às vezes
+      demora"). Agora qualquer job no ar agenda. **(b)** race na navegação
+      rápida — decode antigo chegava atrasado e sobrescrevia a imagem
+      errada (resultado só entra se ainda for a atual). **(c)** zoom de
+      verdade ancorado no cursor + sair do fit materializa o offset de
+      centralização como pan (antes a imagem pulava pro canto no primeiro
+      scroll).
+    - **lab-player**: **(a)** "+ pasta" roda `read_dir` FORA da UI thread
+      — pasta OneDrive/rede (a mesma lentidão do Explorer) travava a
+      janela inteira. **(b)** seek bar durante drag brigava com o
+      progresso (valor reinicializado por frame; agora vive em estado).
+      **(c)** `resume.json` não é mais escrito em disco na UI thread a
+      cada ~5 s (checkpoint em memória; disco só em troca de faixa/fim/
+      saída via `on_exit`). **(d)** repaint adaptativo (120 ms só com
+      interface visível e tocando; 400 ms oculto/pausado). **(e)** resize
+      por Dims dedupe (mpv manda um property-change por eixo; resize só
+      quando os dois chegaram E mudaram). **(f)** playlist sem clone por
+      frame; deadline do embed por tempo (não frames).
+    - **lab-ui**: `workarea.rs` — `work_area` + `fit_to_work_area`
+      extraídos dos dois mains (~180 linhas duplicadas → caminho único
+      pro "janela no tamanho do conteúdo").
 
 ## Releases
 
