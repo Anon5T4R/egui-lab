@@ -44,6 +44,9 @@ pub enum Cmd {
     SeekAbsolute(f64),
     SeekRelative(f64),
     Volume(f64),
+    /// Rotação do vídeo em graus absolutos (0/90/180/270 — o UI guarda o
+    /// quarto de volta e envia o grau; `video-rotate` do mpv).
+    Rotate(i32),
     Stop,
 }
 
@@ -188,11 +191,14 @@ fn engine(cmd_rx: Receiver<Cmd>, ev_tx: Sender<Event>) {
     let mut ipc: Option<Ipc> = None;
     let mut line_buf: Vec<u8> = Vec::new();
     let mut read_buf = [0u8; 4096];
+    // Rotação corrente (graus) — reaplicada a cada arquivo: video-rotate
+    // é runtime, mpv reseta ao abrir mídia nova.
+    let mut rotate: i32 = 0;
 
     loop {
         // 1) comandos da UI (drena tudo; o último é o que vale em seek).
         while let Ok(cmd) = cmd_rx.try_recv() {
-            apply(&cmd, &mut child, &mut ipc, &ev_tx);
+            apply(&cmd, &mut child, &mut ipc, &mut rotate, &ev_tx);
         }
 
         // 2) eventos do mpv (polling; linha por linha).
@@ -232,14 +238,20 @@ fn engine(cmd_rx: Receiver<Cmd>, ev_tx: Sender<Event>) {
         } else {
             Duration::from_millis(300)
         }) {
-            Ok(cmd) => apply(&cmd, &mut child, &mut ipc, &ev_tx),
+            Ok(cmd) => apply(&cmd, &mut child, &mut ipc, &mut rotate, &ev_tx),
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
 }
 
-fn apply(cmd: &Cmd, child: &mut Option<Child>, ipc: &mut Option<Ipc>, ev_tx: &Sender<Event>) {
+fn apply(
+    cmd: &Cmd,
+    child: &mut Option<Child>,
+    ipc: &mut Option<Ipc>,
+    rotate: &mut i32,
+    ev_tx: &Sender<Event>,
+) {
     let send = |ipc: &mut Option<Ipc>, json: &str| {
         if let Some(i) = ipc.as_mut() {
             let _ = i.write_line(json);
@@ -290,6 +302,14 @@ fn apply(cmd: &Cmd, child: &mut Option<Child>, ipc: &mut Option<Ipc>, ev_tx: &Se
                                     r#"{{"command":["observe_property",0,"{prop}"]}}"#
                                 ));
                             }
+                            // Reaplica a rotação da sessão (video-rotate é
+                            // runtime — reseta a cada arquivo).
+                            if *rotate != 0 {
+                                let _ = i.write_line(&format!(
+                                    r#"{{"command":["set_property","video-rotate",{}]}}"#,
+                                    *rotate
+                                ));
+                            }
                             *ipc = Some(i);
                             let _ = ev_tx.send(Event::Ready);
                             break;
@@ -311,6 +331,13 @@ fn apply(cmd: &Cmd, child: &mut Option<Child>, ipc: &mut Option<Ipc>, ev_tx: &Se
             ipc,
             &format!(r#"{{"command":["set_property","volume",{v}]}}"#),
         ),
+        Cmd::Rotate(deg) => {
+            *rotate = deg.rem_euclid(360);
+            send(
+                ipc,
+                &format!(r#"{{"command":["set_property","video-rotate",{deg}]}}"#),
+            );
+        }
         Cmd::Stop => kill(child, ipc),
     }
 }

@@ -98,6 +98,9 @@ struct PlayerApp {
     /// Seek bar em drag (o valor vive aqui — reinicializar do `time` a
     /// cada frame faz o slider brigar com o playback).
     seek_drag: Option<f64>,
+    /// Rotação do vídeo em quartos de volta horário (0..3) — o mpv gira
+    /// via `video-rotate` (runtime, reaplicado a cada arquivo).
+    rot: u32,
     /// Listagem de "+ pasta" rodando fora da UI thread (read_dir em pasta
     /// de rede/nuvem trava a janela — mesma lentidão do Explorer).
     dir_rx: Option<Receiver<Result<Vec<String>, String>>>,
@@ -181,6 +184,7 @@ impl PlayerApp {
             embed_deadline: Some(Instant::now() + Duration::from_secs(3)),
             placed_size: None,
             seek_drag: None,
+            rot: 0,
             dir_rx: None,
             resume_dirty: false,
             chrome: true,
@@ -239,6 +243,35 @@ impl PlayerApp {
             resume::save(&self.resume);
             self.resume_dirty = false;
         }
+    }
+
+    /// Janela do tamanho do vídeo (só com interface oculta — com painéis
+    /// o resize seria redundante). Dedupe pelo tamanho JÁ GIRADO: só
+    /// refaz quando os dois eixos chegaram e mudaram (mpv re-envia
+    /// width/height a cada arquivo; girar 90° troca os eixos e conta
+    /// como mudança).
+    fn fit_window_to_video(&mut self, ctx: &egui::Context) {
+        let Some([vw, vh]) = self.video_size else { return };
+        if vw <= 0.0 || vh <= 0.0 {
+            return;
+        }
+        // mpv reporta as dims da FONTE — rotação de 90°/270° troca os
+        // eixos do que é exibido.
+        let (dw, dh) = if self.rot % 2 == 1 {
+            (vh, vw)
+        } else {
+            (vw, vh)
+        };
+        if self.placed_size == Some([dw, dh]) || self.chrome || self.embed_dead {
+            return;
+        }
+        if ctx.input(|i| i.viewport().fullscreen.unwrap_or(false)) {
+            return;
+        }
+        self.placed_size = Some([dw, dh]);
+        let (inner, pos) = fit_to_work_area(ctx, dw, dh);
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(inner));
+        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
     }
 }
 
@@ -373,20 +406,7 @@ impl eframe::App for PlayerApp {
                     if h > 0 {
                         size[1] = h as f32;
                     }
-                    // Janela do tamanho do vídeo (só com interface oculta —
-                    // com painéis o conteúdo se reorganiza e o resize seria
-                    // redundante). Dedupe: só quando os DOIS eixos chegaram
-                    // E mudaram em relação ao último aplicado (mpv re-envia
-                    // width/height a cada arquivo).
-                    let [vw, vh] = *size;
-                    let fullscreen = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
-                    let complete = vw > 0.0 && vh > 0.0 && Some([vw, vh]) != self.placed_size;
-                    if complete && !self.chrome && !self.embed_dead && !fullscreen {
-                        self.placed_size = Some([vw, vh]);
-                        let (inner, pos) = fit_to_work_area(ctx, vw, vh);
-                        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(inner));
-                        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
-                    }
+                    self.fit_window_to_video(ctx);
                 }
                 Event::EndFile => ended = true,
                 Event::Exited => {
@@ -427,6 +447,18 @@ impl eframe::App for PlayerApp {
                     Cmd::Unpause
                 });
             }
+            // [ / ] = girar o vídeo 90° (anti-horário / horário) — igual
+            // ao lab-image. A janela acompanha (90° troca os eixos).
+            if ctx.input(|i| i.key_pressed(egui::Key::OpenBracket)) {
+                self.rot = (self.rot + 3) % 4;
+                let _ = self.cmd_tx.send(Cmd::Rotate((self.rot * 90) as i32));
+                self.fit_window_to_video(ctx);
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::CloseBracket)) {
+                self.rot = (self.rot + 1) % 4;
+                let _ = self.cmd_tx.send(Cmd::Rotate((self.rot * 90) as i32));
+                self.fit_window_to_video(ctx);
+            }
         }
 
         // F = tela cheia sem interface (o modelo "viewer"); Esc volta.
@@ -444,6 +476,12 @@ impl eframe::App for PlayerApp {
         if let Some(e) = &self.embed {
             if e.take_click() {
                 self.chrome = !self.chrome;
+                // Interface escondida = modo viewer: a janela assume o
+                // tamanho do vídeo (os Dims já vieram, mas com painéis
+                // abertos o resize é pulado — agora é a hora).
+                if !self.chrome {
+                    self.fit_window_to_video(ctx);
+                }
             }
         }
 
@@ -495,6 +533,15 @@ impl eframe::App for PlayerApp {
                         let _ = self.cmd_tx.send(Cmd::Stop);
                         self.idx = None;
                         self.now.clear();
+                    }
+                    if ui
+                        .add_enabled(playing, egui::Button::new("⟳"))
+                        .on_hover_text("girar 90° ([ e ] também giram)")
+                        .clicked()
+                    {
+                        self.rot = (self.rot + 1) % 4;
+                        let _ = self.cmd_tx.send(Cmd::Rotate((self.rot * 90) as i32));
+                        self.fit_window_to_video(ctx);
                     }
                     ui.label(format!(
                         "{} / {}",

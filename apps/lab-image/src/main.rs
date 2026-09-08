@@ -63,9 +63,10 @@ enum Job {
     List(String),
     Decode(PathBuf),
     Exif(PathBuf),
-    /// Export de privacidade: re-encoda girado 90° como PNG ao lado do
-    /// original (`nome.lab.png`) — EXIF nunca sobrevive.
-    Export(PathBuf),
+    /// Export de privacidade: re-encoda girado `deg` (múltiplo de 90 — a
+    /// rotação corrente do viewer) como PNG ao lado do original
+    /// (`nome.lab.png`) — EXIF nunca sobrevive.
+    Export(PathBuf, u32),
 }
 
 enum Done {
@@ -104,10 +105,10 @@ fn spawn_job(job: Job, tx: Sender<Done>) {
         Job::Exif(path) => {
             let _ = tx.send(Done::Exif(img::exif_info(&path)));
         }
-        Job::Export(src) => {
+        Job::Export(src, deg) => {
             let dst = src.with_extension("lab.png");
             let _ = tx.send(Done::Export(
-                img::export(&src, &dst, 90, None, 90).map(|_| dst),
+                img::export(&src, &dst, deg, None, 90).map(|_| dst),
             ));
         }
     });
@@ -132,6 +133,9 @@ struct ImageApp {
     pan: egui::Vec2,
     fit: bool,
     show_exif: bool,
+    /// Rotação do viewer em quartos de volta horário (0..3). Persiste na
+    /// sessão (varredura de fotos giradas não re-gira a cada foto).
+    rot: u32,
     /// Se o app foi aberto com um arquivo via args, guardamos o path até
     /// a lista da pasta estar pronta (decode é async via channel).
     initial_file: Option<PathBuf>,
@@ -159,6 +163,7 @@ impl ImageApp {
             pan: egui::Vec2::ZERO,
             fit: true,
             show_exif: false,
+            rot: 0,
             initial_file: initial_file.clone(),
             chrome: !opened_with_file,
             window_fix: initial_file
@@ -201,6 +206,46 @@ impl ImageApp {
     }
 }
 
+/// Tamanho exibido da textura com rotação aplicada (90°/270° trocam eixos).
+fn displayed_size(tex: &egui::TextureHandle, rot: u32) -> egui::Vec2 {
+    let s = tex.size_vec2();
+    if rot % 2 == 1 {
+        egui::vec2(s.y, s.x)
+    } else {
+        s
+    }
+}
+
+/// Pinta a textura em `dest` girada em quartos de volta horário — mesh
+/// com os cantos do UV permutados (`painter.image` só mapeia rect→rect,
+/// rotação de 90° não é expressável assim).
+fn paint_rotated(painter: &egui::Painter, tex: egui::TextureId, dest: egui::Rect, rot: u32) {
+    let white = egui::Color32::WHITE;
+    let (dtl, utl) = (dest.left_top(), egui::pos2(0.0, 0.0));
+    let (dtr, utr) = (dest.right_top(), egui::pos2(1.0, 0.0));
+    let (dbr, ubr) = (dest.right_bottom(), egui::pos2(1.0, 1.0));
+    let (dbl, ubl) = (dest.left_bottom(), egui::pos2(0.0, 1.0));
+    // Rotação horário: o pixel do canto superior-esquerdo da textura vai
+    // parar no canto superior-direito do destino (e segue a volta).
+    let v = |pos: egui::Pos2, uv: egui::Pos2| egui::epaint::Vertex {
+        pos,
+        uv,
+        color: white,
+    };
+    let quad = match rot % 4 {
+        0 => [v(dtl, utl), v(dtr, utr), v(dbr, ubr), v(dbl, ubl)],
+        1 => [v(dtl, ubl), v(dtr, utl), v(dbr, utr), v(dbl, ubr)],
+        2 => [v(dtl, ubr), v(dtr, ubl), v(dbr, utl), v(dbl, utr)],
+        _ => [v(dtl, utr), v(dtr, ubr), v(dbr, ubl), v(dbl, utl)],
+    };
+    let mut mesh = egui::Mesh::default();
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    mesh.vertices = quad.to_vec();
+    mesh.texture_id = tex;
+    painter.add(egui::Shape::mesh(mesh));
+}
+
 impl eframe::App for ImageApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Se abriu com um arquivo via args, dispara o scan da pasta agora.
@@ -229,14 +274,31 @@ impl eframe::App for ImageApp {
         }
 
         // R = redimensiona a janela pra imagem ATUAL (abriu com uma,
-        // navegou pras setas — a janela acompanha a nova).
+        // navegou pras setas — a janela acompanha a nova). Dims já com a
+        // rotação aplicada (90° troca os eixos).
         if ctx.input(|i| i.key_pressed(egui::Key::R)) {
-            let sz = self.tex.as_ref().map(|(_, t)| t.size_vec2());
+            let sz = self.tex.as_ref().map(|(_, t)| displayed_size(t, self.rot));
             if let Some(s) = sz {
                 self.window_fix = Some([s.x, s.y]);
                 // O resize roda no PRÓXIMO frame — sem isso o app idle não
                 // repinta e o comando nunca executa.
                 ctx.request_repaint();
+            }
+        }
+
+        // [ / ] = girar 90° (anti-horário / horário) — a rotação é do
+        // VIEWER (pan/zoom/fit seguem as dimensões giradas; o export
+        // usa o mesmo ângulo).
+        if self.tex.is_some() {
+            if ctx.input(|i| i.key_pressed(egui::Key::OpenBracket)) {
+                self.rot = (self.rot + 3) % 4;
+                self.fit = true;
+                self.pan = egui::Vec2::ZERO;
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::CloseBracket)) {
+                self.rot = (self.rot + 1) % 4;
+                self.fit = true;
+                self.pan = egui::Vec2::ZERO;
             }
         }
 
@@ -370,6 +432,17 @@ impl eframe::App for ImageApp {
                         if ui.button("i").on_hover_text("EXIF").clicked() {
                             self.show_exif = !self.show_exif;
                         }
+                        if self.tex.is_some() {
+                            if ui
+                                .button("⟳")
+                                .on_hover_text("girar 90° ([ e ] também giram)")
+                                .clicked()
+                            {
+                                self.rot = (self.rot + 1) % 4;
+                                self.fit = true;
+                                self.pan = egui::Vec2::ZERO;
+                            }
+                        }
                         if self.current().is_some()
                             && ui
                                 .button("⤴")
@@ -378,7 +451,7 @@ impl eframe::App for ImageApp {
                         {
                             if let Some(p) = self.current() {
                                 let p = p.clone();
-                                self.request(Job::Export(p));
+                                self.request(Job::Export(p, (self.rot % 4) * 90));
                             }
                         }
                         if lab_ui::settings_ui(ui, &mut self.cfg) {
@@ -433,7 +506,9 @@ impl eframe::App for ImageApp {
             let avail = egui::vec2(screen.x - exif_w, screen.y);
 
             if let Some((_, tex)) = &self.tex {
-                let size = tex.size_vec2();
+                // Dimensões exibidas: rotação de 90°/270° troca os eixos
+                // (fit/zoom/pan trabalham no espaço girado).
+                let size = displayed_size(tex, self.rot);
                 let (base_scale, base_off) = if self.fit {
                     let s = (avail.x / size.x).min(avail.y / size.y).min(1.0);
                     let scaled = size * s;
@@ -494,12 +569,7 @@ impl eframe::App for ImageApp {
                 let scale = base_scale * self.zoom;
                 let dest = egui::Rect::from_min_size(rect.min + base_off + self.pan, size * scale);
                 let painter = ui.painter_at(rect);
-                painter.image(
-                    tex.id(),
-                    dest,
-                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    egui::Color32::WHITE,
-                );
+                paint_rotated(&painter, tex.id(), dest, self.rot);
             } else {
                 ui.centered_and_justified(|ui| {
                     ui.spinner();

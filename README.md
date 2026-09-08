@@ -203,6 +203,21 @@ leitura: o terreno onde o webview ganha com folga.
     - **lab-ui**: `workarea.rs` — `work_area` + `fit_to_work_area`
       extraídos dos dois mains (~180 linhas duplicadas → caminho único
       pro "janela no tamanho do conteúdo").
+18. **Onda 18 (feita — girar mídia):** **[ / ]** giram 90° (anti-horário/
+    horário) nos DOIS viewers, `v0.6.0`:
+    - **lab-image**: rotação do viewer via mesh com UV permutado
+      (`painter.image` só mapeia rect→rect — 90° não é expressável
+      assim); fit/zoom/pan e a tecla R trabalham nas dimensões giradas;
+      o export "⤴" usa o ângulo corrente (o re-encode continua sem
+      EXIF por construção). Botão ⟳ na toolbar; rotação persiste na
+      sessão (varrer fotos giradas não re-gira cada uma).
+    - **lab-player**: `video-rotate` do mpv via IPC (runtime — o motor
+      guarda o ângulo e reaplica a cada arquivo, mpv reseta ao abrir);
+      a janela acompanha (Dims reporta o tamanho da FONTE, 90°/270°
+      trocam os eixos). Botão ⟳ nos controles.
+    - Polida a interação: esconder a interface (clique no vídeo) agora
+      refaz o encaixe da janela no tamanho do vídeo (antes esperava os
+      Dims do arquivo seguinte).
 
 ## Releases
 
