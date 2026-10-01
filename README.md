@@ -26,7 +26,6 @@ repo próprio seguindo um futuro padrão egui.
 | App | Por quê | O que testa no egui |
 |---|---|---|
 | **LocalMonitor** | o app inteiro é `sysinfo` + apresentação; sparklines viram pintura direta; tempo real é o modo natural do immediate mode | repaint contínuo, gráficos à mão, tabela de processos (onda 2) |
-| **LocalCalc** | UI mínima → valida o port do padrão (tema 5 paletas + i18n PT/EN/ES + config) pelo menor custo | motor de expressão, forms, teclado |
 | **LocalClip** | lista + busca + preview; a parte difícil (poller, hotkey global, tray) é integração OS via crates | `tray-icon`, `global-hotkey`, `arboard`, SQLite |
 | **LocalKeys** | back 100% Rust (XChaCha20-Poly1305 + Argon2id, `.tkeys` validado contra o Android) reaproveitável | forms densos, keyring, cripto em repouso |
 
@@ -52,8 +51,7 @@ leitura: o terreno onde o webview ganha com folga.
 ## Ondas
 
 1. **Onda 1 (feita):** `lab-ui` (tema/i18n/config — esqueleto do "padrão egui")
-   + `lab-monitor` (CPU/memória/núcleos ao vivo) + `lab-calc` (expressões,
-   preview ao vivo, histórico).
+   + `lab-monitor` (CPU/memória/núcleos ao vivo).
 2. **Onda 2 (feita):** `lab-clip` — bandeja (`tray-icon`), atalho global
    **Ctrl+Alt+V** (`global-hotkey`; o oficial é Ctrl+Shift+V e dois apps não
    registram o mesmo atalho — o LocalClip instalado é dono), poller de texto
@@ -71,8 +69,6 @@ leitura: o terreno onde o webview ganha com folga.
    (botão ou ao minimizar, regra do oficial).
 4. **Onda 4 (feita — "deixar pronto"):** os quatro pilotos fecham as lacunas
    que faltavam pra se sentirem completos:
-   - `lab-calc`: **científica** — sin/cos/tan/asin/acos/atan/sqrt/ln/log2/
-     log10/abs, π/e, `ans` e **DEG/RAD** (trig converte entrada/saída).
    - `lab-monitor`: **rede** (↓/ú por segundo com histórico, escala
      automática) e **discos** (barra de uso por volume) — paridade de
      features com o v0.1 do oficial.
@@ -250,7 +246,6 @@ sempre (mesma política do rfd: AppImage enxuto).
 
 ```
 cargo run -p lab-monitor
-cargo run -p lab-calc
 cargo run -p lab-clip
 cargo run -p lab-keys
 cargo run -p lab-hub

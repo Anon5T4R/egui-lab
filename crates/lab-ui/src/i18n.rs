@@ -44,11 +44,7 @@ pub enum Key {
     KillAsk,
     Confirm,
     Cancel,
-    // lab-calc
-    History,
     Clear,
-    ExprHint,
-    NoHistory,
     // lab-clip
     ShowHide,
     Quit,
@@ -128,10 +124,7 @@ const KEYS: &[Key] = &[
     Key::KillAsk,
     Key::Confirm,
     Key::Cancel,
-    Key::History,
     Key::Clear,
-    Key::ExprHint,
-    Key::NoHistory,
     Key::ShowHide,
     Key::Quit,
     Key::Pin,
@@ -267,26 +260,6 @@ pub fn t(lang: Lang, key: Key) -> &'static str {
             Lang::Pt => "Cancelar",
             Lang::En => "Cancel",
             Lang::Es => "Cancelar",
-        },
-        Key::History => match lang {
-            Lang::Pt => "Histórico",
-            Lang::En => "History",
-            Lang::Es => "Historial",
-        },
-        Key::Clear => match lang {
-            Lang::Pt => "Limpar",
-            Lang::En => "Clear",
-            Lang::Es => "Borrar",
-        },
-        Key::ExprHint => match lang {
-            Lang::Pt => "expresse, ex.: 2*(3+4)^2",
-            Lang::En => "type an expression, e.g. 2*(3+4)^2",
-            Lang::Es => "escribe una expresión, p. ej. 2*(3+4)^2",
-        },
-        Key::NoHistory => match lang {
-            Lang::Pt => "sem contas ainda",
-            Lang::En => "no calculations yet",
-            Lang::Es => "sin cálculos aún",
         },
         Key::ShowHide => match lang {
             Lang::Pt => "Mostrar/Ocultar",

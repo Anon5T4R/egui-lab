@@ -41,14 +41,6 @@ pub const APPS: &[AppDef] = &[
         icon_png_url: "https://raw.githubusercontent.com/Anon5T4R/LocalMonitor/main/src-tauri/icons/128x128.png",
     },
     AppDef {
-        id: "lab-calc",
-        display: "Lab Calc",
-        win_asset: "lab-calc-windows-x64.zip",
-        linux_asset: "Lab_Calc-x86_64.AppImage",
-        icon_ico_url: "https://raw.githubusercontent.com/Anon5T4R/LocalCalc/main/src-tauri/icons/icon.ico",
-        icon_png_url: "https://raw.githubusercontent.com/Anon5T4R/LocalCalc/main/src-tauri/icons/128x128.png",
-    },
-    AppDef {
         id: "lab-clip",
         display: "Lab Clip",
         win_asset: "lab-clip-windows-x64.zip",
