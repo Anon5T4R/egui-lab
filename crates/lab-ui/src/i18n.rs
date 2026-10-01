@@ -261,6 +261,11 @@ pub fn t(lang: Lang, key: Key) -> &'static str {
             Lang::En => "Cancel",
             Lang::Es => "Cancelar",
         },
+        Key::Clear => match lang {
+            Lang::Pt => "Limpar",
+            Lang::En => "Clear",
+            Lang::Es => "Borrar",
+        },
         Key::ShowHide => match lang {
             Lang::Pt => "Mostrar/Ocultar",
             Lang::En => "Show/Hide",
