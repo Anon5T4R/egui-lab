@@ -215,6 +215,24 @@ leitura: o terreno onde o webview ganha com folga.
       refaz o encaixe da janela no tamanho do vídeo (antes esperava os
       Dims do arquivo seguinte).
 
+19. **Onda 19 (feita — paridade do keys):** `lab-keys` ganha o que faltava
+    pra se igualar ao LocalKeys oficial:
+    - **Importar** (botão na barra do cofre destrancado): **KDBX**
+      (`kdbx.rs` verbatim, crate `keepass`), **Bitwarden** export cifrado
+      (`bwdecrypt.rs` verbatim — PBKDF2/Argon2id → HKDF → AES-256-CBC +
+      HMAC-SHA256, decifra antes do parse) e **CSV** (Chrome/Edge/LastPass/
+      1Password, porte do `import.ts` com custom fields e cheiro de segredo).
+      Card/identidade são pulados com relatório — o lab só gerencia
+      login/nota.
+    - **Gerador** de senha/passphrase (`generator.rs` verbatim + wordlist
+      EFF 7776 embutida; CSPRNG do SO) e **medidor de força** zxcvbn
+      (0-4, vermelho→verde) no form de adição/edição.
+    - **Anexos** por item (adicionar/salvar; base64 no blob, escrita
+      conservadora), **trocar senha mestra** (tranca o cofre depois — a
+      chave em memória é do salt antigo; invalida a do keyring) e
+      **auto-type** por item (enigo, só Windows — mesma política do
+      keyring/tray: no Linux o AppImage fica enxuto).
+
 ## Releases
 
 Tag `vX.Y.Z` → `release.yml` publica na GitHub Release:

@@ -17,13 +17,30 @@ rand.workspace = true
 zeroize.workspace = true
 totp-rs.workspace = true
 arboard.workspace = true
+# Base64 em TODAS as plataformas: anexos (vault.rs) e o import do export
+# cifrado do Bitwarden (bwdecrypt.rs) usam — o desbloqueio rápido no keyring
+# também, e continua funcionando.
+base64.workspace = true
+# Import de cofres KeePass (.kdbx) — lê/decifra com a senha do usuário.
+keepass.workspace = true
+# Gerador de senha/passphrase + medidor de força (zxcvbn).
+zxcvbn.workspace = true
+# Import do export CIFRADO do Bitwarden (PBKDF2/Argon2id → HKDF → AES-CBC+HMAC).
+pbkdf2.workspace = true
+hkdf.workspace = true
+sha2.workspace = true
+aes.workspace = true
+cbc.workspace = true
+hmac.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 # Desbloqueio rápido (chave no Credential Manager) — só no Windows: o
 # secret-service do Linux puxaria libdbus pro build/AppImage (runner nem tem
 # dbus-1 dev). Mesma política do tray/rfd: AppImage enxuto.
 keyring.workspace = true
-base64.workspace = true
+# Auto-type (digita usuário/senha no campo focado de outro app) — só Windows:
+# no Linux o enigo puxaria X11 dev, mesma política do keyring/rfd.
+enigo = "0.3"
 # Flag ExcludeClipboardContentFromMonitorProcessing ao copiar senha
 clipboard-win = "5.4"
 rfd.workspace = true

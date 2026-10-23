@@ -2,10 +2,11 @@
 //! LocalKeys oficial — lá o schema vive no front TS (`src/types.ts`); aqui só
 //! o subconjunto que o lab usa.
 //!
-//! ESCRITA CONSERVADORA: o lab só ACRESCENTA itens de login. Pastas, anexos,
-//! campos custom, histórico de senha e itens de outros tipos de um cofre REAL
-//! atravessam intactos — manipulamos o JSON bruto (`serde_json::Value`), nunca
-//! um struct que re-serializaria só os campos conhecidos.
+//! ESCRITA CONSERVADORA: o lab acrescenta itens (login/nota) e anexos a um
+//! item. Pastas, campos custom, histórico de senha e o que mais existir num
+//! cofre REAL atravessam intactos — manipulamos o JSON bruto
+//! (`serde_json::Value`), nunca um struct que re-serializaria só os campos
+//! conhecidos.
 
 use serde_json::{json, Value};
 
@@ -109,21 +110,64 @@ fn gen_id() -> String {
     )
 }
 
-/// ACRESCENTA um item de login no vault bruto (mesma forma que `emptyItem`
-/// do oficial gera pra kind=login).
-pub fn add_login(raw: &mut Value, name: &str, username: &str, password: &str) {
-    let item = json!({
+/// Campos do login de um item novo (só faz sentido para `kind = "login"`).
+/// Strings próprias: os importadores montam o TOTP já extraído (dono) e não
+/// ganham nada emprestando o buffer da linha do CSV.
+pub struct LoginFields {
+    pub username: String,
+    pub password: String,
+    pub uris: Vec<String>,
+    pub totp: String,
+}
+
+/// Item novo no shape do `emptyItem` do oficial — base comum do `add_login` e
+/// dos importadores (`import.rs`). `login` só entra quando o item é de LOGIN:
+/// note/card/identity não carregam o campo (mesmo comportamento do TS).
+pub struct NewItem<'a> {
+    pub kind: &'a str,
+    pub name: &'a str,
+    pub notes: &'a str,
+    pub favorite: bool,
+    pub login: Option<LoginFields>,
+    pub custom_fields: Vec<Value>,
+}
+
+/// Monta o item novo (id/timestamps daqui). Não toca no vault — quem grava é
+/// `push_item`/`push_items`.
+pub fn make_item(n: NewItem<'_>) -> Value {
+    let now = now_ms();
+    let mut item = json!({
         "id": gen_id(),
-        "kind": "login",
-        "name": name,
-        "favorite": false,
+        "kind": n.kind,
+        "name": n.name,
+        "favorite": n.favorite,
         "folderId": null,
-        "notes": "",
-        "createdAt": now_ms(),
-        "updatedAt": now_ms(),
+        "notes": n.notes,
+        "createdAt": now,
+        "updatedAt": now,
         "deletedAt": null,
-        "login": { "username": username, "password": password, "uris": [""], "totp": "" }
     });
+    if let Some(login) = n.login {
+        item["login"] = json!({
+            "username": login.username,
+            "password": login.password,
+            "uris": login.uris,
+            "totp": login.totp,
+        });
+    }
+    if !n.custom_fields.is_empty() {
+        item["customFields"] = Value::Array(n.custom_fields);
+    }
+    item
+}
+
+/// Campo personalizado no shape do oficial: `{id,name,value,hidden}`.
+pub fn custom_field(name: &str, value: &str, hidden: bool) -> Value {
+    json!({ "id": gen_id(), "name": name, "value": value, "hidden": hidden })
+}
+
+/// Acrescenta um item já montado (`make_item`) ao vault bruto.
+pub fn push_item(raw: &mut Value, item: Value) {
     if !raw["items"].is_array() {
         raw["items"] = json!([]);
     }
@@ -131,6 +175,32 @@ pub fn add_login(raw: &mut Value, name: &str, username: &str, password: &str) {
         .as_array_mut()
         .expect("items é array (garantido acima)")
         .push(item);
+}
+
+/// Acrescenta um lote de itens — caminho dos importadores.
+pub fn push_items(raw: &mut Value, items: Vec<Value>) {
+    for item in items {
+        push_item(raw, item);
+    }
+}
+
+/// ACRESCENTA um item de login no vault bruto (mesma forma que `emptyItem`
+/// do oficial gera pra kind=login).
+pub fn add_login(raw: &mut Value, name: &str, username: &str, password: &str) {
+    let item = make_item(NewItem {
+        kind: "login",
+        name,
+        notes: "",
+        favorite: false,
+        login: Some(LoginFields {
+            username: username.to_string(),
+            password: password.to_string(),
+            uris: vec![String::new()],
+            totp: String::new(),
+        }),
+        custom_fields: Vec::new(),
+    });
+    push_item(raw, item);
 }
 
 /// `(username, password, totp)` do login pelo id — só leitura.
@@ -227,6 +297,76 @@ pub fn delete_login(raw: &mut Value, id: &str) -> bool {
         }
     }
     false
+}
+
+fn item_mut<'a>(raw: &'a mut Value, id: &str) -> Option<&'a mut Value> {
+    raw.get_mut("items")?
+        .as_array_mut()?
+        .iter_mut()
+        .find(|it| it.get("id").and_then(Value::as_str) == Some(id))
+}
+
+fn item<'a>(raw: &'a Value, id: &str) -> Option<&'a Value> {
+    raw.get("items")?
+        .as_array()?
+        .iter()
+        .find(|it| it.get("id").and_then(Value::as_str) == Some(id))
+}
+
+/// Anexa um arquivo a um item — escrita conservadora: só mexe no array
+/// `attachments` do item alvo, o resto do cofre atravessa intacto.
+///
+/// `data_b64` é o conteúdo já em base64 (o blob `.tkeys` cifra o item inteiro,
+/// então o anexo não precisa de cifra própria). `size` é o tamanho dos bytes
+/// DECODIFICADOS, como o oficial espera. Base64 inválido ou item inexistente →
+/// `false` e nada muda.
+pub fn add_attachment(
+    raw: &mut Value,
+    item_id: &str,
+    name: &str,
+    mime: &str,
+    data_b64: &str,
+) -> bool {
+    use base64::Engine as _;
+
+    let data_b64 = data_b64.trim();
+    let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data_b64) else {
+        return false;
+    };
+    let Some(it) = item_mut(raw, item_id) else {
+        return false;
+    };
+    let att = json!({
+        "id": gen_id(),
+        "name": name,
+        "size": bytes.len(),
+        "mime": mime,
+        "dataB64": data_b64,
+    });
+    if !it.get("attachments").is_some_and(Value::is_array) {
+        it["attachments"] = json!([]);
+    }
+    it["attachments"]
+        .as_array_mut()
+        .expect("attachments é array (garantido acima)")
+        .push(att);
+    true
+}
+
+/// `(name, dataB64)` de um anexo — o que a UI precisa pra salvar em disco.
+pub fn attachment_data(
+    raw: &Value,
+    item_id: &str,
+    attachment_id: &str,
+) -> Option<(String, String)> {
+    let atts = item(raw, item_id)?.get("attachments")?.as_array()?;
+    let att = atts
+        .iter()
+        .find(|a| a.get("id").and_then(Value::as_str) == Some(attachment_id))?;
+    Some((
+        att.get("name").and_then(Value::as_str)?.to_string(),
+        att.get("dataB64").and_then(Value::as_str)?.to_string(),
+    ))
 }
 
 #[cfg(test)]
@@ -428,6 +568,111 @@ mod tests {
             "senha não mudou → sem histórico (igual ao oficial)"
         );
         assert_eq!(v["items"][0]["name"], "Outro nome");
+    }
+
+    #[test]
+    fn item_de_nota_nao_carrega_login() {
+        // O emptyItem("note") do oficial não tem `login` — os importadores
+        // dependem disso pra nota não virar login sem senha.
+        let item = make_item(NewItem {
+            kind: "note",
+            name: "Nota",
+            notes: "texto",
+            favorite: true,
+            login: None,
+            custom_fields: Vec::new(),
+        });
+        assert_eq!(item["kind"], "note");
+        assert_eq!(item["notes"], "texto");
+        assert_eq!(item["favorite"], true);
+        assert!(item.get("login").is_none());
+        assert!(item.get("customFields").is_none());
+    }
+
+    #[test]
+    fn anexo_entra_com_tamanho_decodificado() {
+        let mut v = vault_com_item();
+        let id = v["items"][0]["id"].as_str().unwrap().to_string();
+        // "hi" em base64 → 2 bytes decodificados (o size é do conteúdo, não do b64)
+        assert!(add_attachment(&mut v, &id, "f.txt", "text/plain", "aGk="));
+        let atts = v["items"][0]["attachments"].as_array().unwrap();
+        assert_eq!(atts.len(), 1);
+        assert_eq!(atts[0]["name"], "f.txt");
+        assert_eq!(atts[0]["mime"], "text/plain");
+        assert_eq!(atts[0]["size"], 2);
+        assert_eq!(atts[0]["dataB64"], "aGk=");
+        // id no formato UUID do oficial
+        let att_id = atts[0]["id"].as_str().unwrap();
+        assert_eq!(att_id.len(), 36);
+        assert_eq!(
+            attachment_data(&v, &id, att_id),
+            Some(("f.txt".into(), "aGk=".into()))
+        );
+    }
+
+    #[test]
+    fn anexo_preserva_o_resto_do_cofre() {
+        let mut v: Value = serde_json::from_str(
+            r#"{"version":1,"folders":[{"id":"f1","name":"Pessoal"}],
+               "items":[{"id":"x","kind":"login","name":"N","favorite":true,"folderId":"f1",
+                          "notes":"keep","customFields":[{"id":"c1","name":"k","value":"v","hidden":false}],
+                          "attachments":[{"id":"a1","name":"velho.png","size":3,"mime":"image/png","dataB64":"YWJj"}],
+                          "login":{"username":"u","password":"p","uris":["https://a"],"totp":""}}]}"#,
+        )
+        .unwrap();
+        assert!(add_attachment(&mut v, "x", "novo.txt", "text/plain", "aGk="));
+        assert_eq!(v["folders"][0]["name"], "Pessoal");
+        assert_eq!(v["items"][0]["notes"], "keep");
+        assert_eq!(v["items"][0]["customFields"][0]["value"], "v");
+        let atts = v["items"][0]["attachments"].as_array().unwrap();
+        assert_eq!(atts.len(), 2, "anexo existente não pode ser derrubado");
+        assert_eq!(atts[0]["name"], "velho.png");
+        assert_eq!(atts[1]["name"], "novo.txt");
+    }
+
+    #[test]
+    fn anexo_invalido_nao_grava_nada() {
+        let mut v = vault_com_item();
+        let id = v["items"][0]["id"].as_str().unwrap().to_string();
+        let antes = serde_json::to_string(&v).unwrap();
+        assert!(!add_attachment(&mut v, &id, "f", "text/plain", "não-é-base64!!"));
+        assert!(!add_attachment(&mut v, "id-que-nao-existe", "f", "text/plain", "aGk="));
+        assert_eq!(serde_json::to_string(&v).unwrap(), antes);
+        assert_eq!(attachment_data(&v, &id, "a-nao-existe"), None);
+        assert_eq!(attachment_data(&v, "id-que-nao-existe", "a1"), None);
+    }
+
+    #[test]
+    fn push_items_acrescenta_o_lote() {
+        let mut v = vault_com_item();
+        let lote = vec![
+            make_item(NewItem {
+                kind: "login",
+                name: "A",
+                notes: "",
+                favorite: false,
+                login: Some(LoginFields {
+                    username: "u".into(),
+                    password: "p".into(),
+                    uris: vec!["https://a".into()],
+                    totp: String::new(),
+                }),
+                custom_fields: vec![custom_field("pin", "1234", true)],
+            }),
+            make_item(NewItem {
+                kind: "note",
+                name: "B",
+                notes: "",
+                favorite: false,
+                login: None,
+                custom_fields: Vec::new(),
+            }),
+        ];
+        push_items(&mut v, lote);
+        assert_eq!(v["items"].as_array().unwrap().len(), 3);
+        assert_eq!(v["items"][1]["customFields"][0]["name"], "pin");
+        assert_eq!(v["items"][1]["customFields"][0]["hidden"], true);
+        assert_eq!(v["items"][2]["kind"], "note");
     }
 
     #[test]

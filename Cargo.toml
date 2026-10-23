@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/*", "apps/*"]
 
 [workspace.package]
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 license = "MIT"
 
@@ -25,6 +25,19 @@ chacha20poly1305 = "0.10"
 totp-rs = { version = "5", default-features = false }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 base64 = "0.22"
+# Import de bancos KeePass (.kdbx) — leitura decifrando com a senha do usuário
+# (crate auditado; mesmo pin do LocalKeys).
+keepass = "0.7"
+# Força de senha (mesmo zxcvbn do Bitwarden/Dropbox — não é heurística caseira).
+zxcvbn = "3"
+# Import do export CIFRADO do Bitwarden: PBKDF2 ou Argon2id → HKDF (encKey,
+# macKey) → AES-256-CBC + HMAC-SHA256. Primitivas auditadas do RustCrypto.
+pbkdf2 = "0.12"
+hkdf = "0.12"
+sha2 = "0.10"
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+hmac = "0.12"
 # PNG das imagens do lab-clip (o eframe já puxa image 0.25 — sem custo no lock)
 image = "0.25"
 # Hub: downloads das releases (ureq = sync+rustls, sem tokio/openssl) e unzip
