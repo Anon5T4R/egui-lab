@@ -54,6 +54,35 @@ enum TrayCmd {
 }
 
 fn main() -> eframe::Result<()> {
+    // ── single-instance (só Windows — é lá que o X esconde pra bandeja) ──
+    // Mesmo desenho do lab-clip (onda 9): lock de ARQUIVO (`File::try_lock` —
+    // o kernel libera sozinho em crash) + flag "mostra-te" consumida pela
+    // thread da bandeja. Sem isso, abrir pelo ícone de novo cria uma segunda
+    // instância (e segunda bandeja) em vez de acordar a que já existe.
+    #[cfg(windows)]
+    {
+        let dir = config::config_dir(APP_ID);
+        let _ = std::fs::create_dir_all(&dir);
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(dir.join("instance.lock"));
+        let segunda = match &lock {
+            Ok(f) => f.try_lock().is_err(),
+            // Sem conseguir abrir o lock: segue SEM guarda — melhor rodar
+            // sem single-instance do que não rodar.
+            Err(_) => false,
+        };
+        if segunda {
+            let _ = std::fs::write(dir.join("show.flag"), b"1");
+            return Ok(()); // a bandeja do primeiro atende a flag e mostra
+        }
+        if let Ok(f) = lock {
+            std::mem::forget(f); // lock vive até o processo morrer
+        }
+    }
+
     let cfg = config::load(APP_ID);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -301,21 +330,33 @@ fn spawn_tray() -> (Option<TrayIcon>, Arc<AtomicBool>) {
     std::thread::Builder::new()
         .name("keys-tray".into())
         .spawn(move || {
-            while let Ok(cmd) = rx.recv() {
-                match cmd {
-                    TrayCmd::ShowHide => {
-                        if winctl::is_visible() {
-                            winctl::hide();
-                        } else {
+            // Flag "mostra-te" da segunda instância (single-instance): a
+            // thread da bandeja é quem a consome — o update não roda com a
+            // janela oculta, então não pode depender dele.
+            let show_flag = config::config_dir(APP_ID).join("show.flag");
+            loop {
+                match rx.recv_timeout(std::time::Duration::from_millis(200)) {
+                    Ok(cmd) => match cmd {
+                        TrayCmd::ShowHide => {
+                            if winctl::is_visible() {
+                                winctl::hide();
+                            } else {
+                                winctl::show();
+                            }
+                        }
+                        TrayCmd::Quit => {
+                            quit_flag.store(true, Ordering::Relaxed);
+                            // Janela VISÍVEL primeiro — o update precisa rodar pra
+                            // encerrar pelo caminho limpo (Close).
                             winctl::show();
                         }
-                    }
-                    TrayCmd::Quit => {
-                        quit_flag.store(true, Ordering::Relaxed);
-                        // Janela VISÍVEL primeiro — o update precisa rodar pra
-                        // encerrar pelo caminho limpo (Close).
-                        winctl::show();
-                    }
+                    },
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                }
+                if show_flag.exists() {
+                    let _ = std::fs::remove_file(&show_flag);
+                    winctl::show();
                 }
             }
         })

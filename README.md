@@ -232,6 +232,14 @@ leitura: o terreno onde o webview ganha com folga.
       chave em memória é do salt antigo; invalida a do keyring) e
       **auto-type** por item (enigo, só Windows — mesma política do
       keyring/tray: no Linux o AppImage fica enxuto).
+20. **Onda 20 (feita — single-instance no keys):** abrir pelo ícone com o
+    app na bandeja criava uma SEGUNDA instância (e segunda bandeja) em vez
+    de acordar a primeira. Mesmo desenho do lab-clip (onda 9): lock de
+    arquivo (`File::try_lock` — o kernel libera sozinho em crash) + flag
+    "mostra-te" consumida pela thread da bandeja (que agora faz
+    `recv_timeout` de 200 ms pra checar a flag — o update não roda com a
+    janela oculta). Só no Windows: no Linux o X fecha de verdade, não há
+    zumbi na bandeja.
 
 ## Releases
 
