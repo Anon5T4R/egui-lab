@@ -240,6 +240,15 @@ leitura: o terreno onde o webview ganha com folga.
     `recv_timeout` de 200 ms pra checar a flag — o update não roda com a
     janela oculta). Só no Windows: no Linux o X fecha de verdade, não há
     zumbi na bandeja.
+21. **Onda 21 (feita — remoção do auto-type):** o auto-type da onda 6 saiu
+    (`autotype.rs`, `enigo`, botão por item, chave de i18n) — frágil (digita
+    na janela que estiver em foco, corrida com o usuário) e redundante com a
+    cópia com exclusão de histórico. A direção pra preenchimento em navegador
+    é a **ponte do oficial** (extensão + host nativo + bridge com handshake
+    por token — `browser-ext/` + `native_host.rs` + `bridge.rs` no LocalKeys),
+    avaliada como onda futura; Firefox aceita extensão não assinada via
+    `about:debugging` (temporária), Chrome/Edge aceitam pasta carregada com
+    ID estável por chave RSA fixa.
 
 ## Releases
 

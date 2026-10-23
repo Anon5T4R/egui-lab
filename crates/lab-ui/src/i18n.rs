@@ -109,7 +109,6 @@ pub enum Key {
     AddAttachment,
     SaveAttachment,
     NoAttachments,
-    Autotype,
     // lab-hub
     Install,
     Update,
@@ -222,7 +221,6 @@ const KEYS: &[Key] = &[
     Key::AddAttachment,
     Key::SaveAttachment,
     Key::NoAttachments,
-    Key::Autotype,
     Key::Install,
     Key::Update,
     Key::Open,
@@ -707,7 +705,6 @@ pub fn t(lang: Lang, key: Key) -> &'static str {
             Lang::En => "no attachments",
             Lang::Es => "sin adjuntos",
         },
-        Key::Autotype => "Auto-type",
         Key::Settings => match lang {
             Lang::Pt => "Configurações",
             Lang::En => "Settings",

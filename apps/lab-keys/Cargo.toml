@@ -37,10 +37,7 @@ hmac.workspace = true
 # Desbloqueio rápido (chave no Credential Manager) — só no Windows: o
 # secret-service do Linux puxaria libdbus pro build/AppImage (runner nem tem
 # dbus-1 dev). Mesma política do tray/rfd: AppImage enxuto.
-keyring.workspace = true
-# Auto-type (digita usuário/senha no campo focado de outro app) — só Windows:
-# no Linux o enigo puxaria X11 dev, mesma política do keyring/rfd.
-enigo = "0.3"
+    keyring.workspace = true
 # Flag ExcludeClipboardContentFromMonitorProcessing ao copiar senha
 clipboard-win = "5.4"
 rfd.workspace = true

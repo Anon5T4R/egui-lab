@@ -9,14 +9,15 @@
 //! (janela oculta congela o update — ver `winctl.rs`), como no lab-clip.
 //! Onda 6: paridade de FEATURES com o LocalKeys oficial — importação (KeePass
 //! `.kdbx`, Bitwarden cifrado e CSV), gerador de senha/passphrase + medidor de
-//! força, anexos, troca de senha mestra e auto-type (Windows).
+//! força, anexos e troca de senha mestra. (O auto-type da onda 6 foi REMOVIDO
+//! na onda 21 — frágil e substituído pela cópia com exclusão de histórico; a
+//! camada de navegador é a direção futura, como a ponte do oficial.)
 //!
 //! Nota: o Argon2 roda na thread da UI (~300 ms de freeze no destrancar) — o
 //! oficial usa command async do Tauri. Aceitável no lab; anotado como achado.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod autotype;
 mod bwdecrypt;
 mod clipboard;
 mod crypto;
@@ -1791,19 +1792,6 @@ impl KeysApp {
                         {
                             self.attach_item = Some(id.clone());
                             self.attach_path.clear();
-                        }
-                        // Auto-type: só Windows (no Linux o enigo puxaria X11
-                        // dev) e só com usuário, como o botão de copiar user.
-                        #[cfg(windows)]
-                        if username.is_some() && ui.small_button(t(Key::Autotype)).clicked() {
-                            if let Some((user, pass, _)) =
-                                self.raw.as_ref().and_then(|r| vault::login_triple(r, id))
-                            {
-                                match autotype::type_login(&user, &pass) {
-                                    Ok(()) => self.err = None,
-                                    Err(e) => self.err = Some(e),
-                                }
-                            }
                         }
                         if ui.small_button(t(Key::Edit)).clicked() {
                             if let Some((user, pass, totp)) =
