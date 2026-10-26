@@ -411,6 +411,9 @@ struct KeysApp {
     raw: Option<serde_json::Value>,
     items: Vec<vault::ItemView>,
     search: String,
+    /// Filtro "só códigos que mudam" (TOTP/oauth otp): mostra só itens com
+    /// segredo TOTP. Estado de sessão — não persiste, como a busca.
+    filter_totp: bool,
     // formulário de adição/edição
     form_open: bool,
     form_edit_id: Option<String>,
@@ -467,6 +470,7 @@ impl KeysApp {
             raw: None,
             items: Vec::new(),
             search: String::new(),
+            filter_totp: false,
             form_open: false,
             form_edit_id: None,
             add_name: String::new(),
@@ -1675,11 +1679,27 @@ impl KeysApp {
         });
 
         ui.add_space(4.0);
-        ui.add(
-            egui::TextEdit::singleline(&mut self.search)
-                .hint_text(t(Key::Search))
-                .desired_width(f32::INFINITY),
-        );
+        ui.horizontal(|ui| {
+            // Filtro "só códigos que mudam" (TOTP): toggle ao lado da busca.
+            let filtro = egui::Button::new(egui::RichText::new(format!(
+                "{} ⟳",
+                t(Key::Totp)
+            )))
+            .small();
+            let filtro = if self.filter_totp {
+                filtro.fill(egui::Color32::from_rgb(70, 110, 160))
+            } else {
+                filtro
+            };
+            if ui.add(filtro).clicked() {
+                self.filter_totp = !self.filter_totp;
+            }
+            ui.add(
+                egui::TextEdit::singleline(&mut self.search)
+                    .hint_text(t(Key::Search))
+                    .desired_width(f32::INFINITY),
+            );
+        });
         ui.add_space(6.0);
 
         if let Some(e) = &self.err {
@@ -1693,6 +1713,7 @@ impl KeysApp {
         let view: Vec<&(String, String, Option<String>, Option<String>, bool)> = rows
             .iter()
             .filter(|(_, name, _, _, _)| needle.is_empty() || name.to_lowercase().contains(&needle))
+            .filter(|(_, _, _, totp, _)| !self.filter_totp || totp.is_some())
             .collect();
 
         if view.is_empty() {

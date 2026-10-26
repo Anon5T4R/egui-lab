@@ -2781,7 +2781,7 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
 name = "lab-clip"
-version = "0.7.1"
+version = "0.7.3"
 dependencies = [
  "arboard",
  "clipboard-win",
@@ -2799,7 +2799,7 @@ dependencies = [
 
 [[package]]
 name = "lab-hub"
-version = "0.7.1"
+version = "0.7.3"
 dependencies = [
  "eframe",
  "egui",
@@ -2815,7 +2815,7 @@ dependencies = [
 
 [[package]]
 name = "lab-image"
-version = "0.7.1"
+version = "0.7.3"
 dependencies = [
  "eframe",
  "egui",
@@ -2828,7 +2828,7 @@ dependencies = [
 
 [[package]]
 name = "lab-keys"
-version = "0.7.1"
+version = "0.7.3"
 dependencies = [
  "aes 0.8.4",
  "arboard",
@@ -2859,7 +2859,7 @@ dependencies = [
 
 [[package]]
 name = "lab-monitor"
-version = "0.7.1"
+version = "0.7.3"
 dependencies = [
  "eframe",
  "lab-ui",
@@ -2868,7 +2868,7 @@ dependencies = [
 
 [[package]]
 name = "lab-player"
-version = "0.7.1"
+version = "0.7.3"
 dependencies = [
  "eframe",
  "egui",
@@ -2885,7 +2885,7 @@ dependencies = [
 
 [[package]]
 name = "lab-ui"
-version = "0.7.1"
+version = "0.7.3"
 dependencies = [
  "egui",
  "serde",
