@@ -255,6 +255,25 @@ leitura: o terreno onde o webview ganha com folga.
     (Passkeys ficam pra onda da ponte de navegador — pré-requisito real:
     interceptar WebAuthn exige extensão, e o schema do `.tkeys` não tem
     campo de passkey.)
+23. **Onda 23 (feita — a passada geral):** jobs fora da UI + features que
+    faltavam + repassada visual. Referência: `local-pdf/crates/ui-egui`
+    (`widgets.rs` — modais, pills, ghost buttons, toast; o worker+mpsc de
+    lá valida o desenho).
+    - **`jobs.rs`** — toda operação pesada sai da thread de UI (Argon2id do
+      destrancar/criar/trocar-mestra, PBKDF2 600k do import Bitwarden,
+      decifra do keepass, leitura/base64 de anexos): thread própria →
+      resultado por canal → `ctx.request_repaint()`. Progress notice no
+      rodapé enquanto roda; gatilhos desabilitados. Cap de anexos em
+      10 MiB (checado por `metadata()` ANTES de ler). O boot do quick
+      unlock fica síncrono (AEAD de poucos KB, sem KDF).
+    - **Exportar** (JSON/CSV, porte fiel do `export.ts` com aviso de
+      "claro, sem cifra"), **URL e notas no form**, **favoritar ★**
+      (espelha o `updateItem` do oficial: grava `updatedAt`; favoritos
+      primeiro na renderização), **lixeira** (ver/restaurar/excluir de vez
+      — o oficial não tem "esvaziar", nada inventado) e **reveal 👁**.
+    - **UI**: diálogos viram `egui::Modal` com cartão (canto 10, sombra),
+      campos de 30 pt, ação primária em pill accent, botões por item em
+      ghost, toast no rodapé central (dark↔light invertido, 3,5 s).
 
 ## Releases
 

@@ -136,6 +136,30 @@ pub enum Key {
     Autostart,
     PressKeys,
     CloseToTray,
+    // lab-keys onda 17 — spinner dos jobs pesados
+    Working,
+    Unlocking,
+    Importing,
+    ReadingFile,
+    ChangingMaster,
+    AttachmentTooBig,
+    // lab-keys onda 23 — URL/notas no form, export, favorito, lixeira, reveal
+    Url,
+    Notes,
+    Favorite,
+    Reveal,
+    Export,
+    ExportJson,
+    ExportCsv,
+    ExportWarning,
+    Exported,
+    Trash,
+    TrashEmpty,
+    Restore,
+    Restored,
+    DeleteForever,
+    Deleted,
+    Close,
 }
 
 /// Todas as chaves — usado pelo teste de completude (fora de teste o match
@@ -244,6 +268,28 @@ const KEYS: &[Key] = &[
     Key::Autostart,
     Key::PressKeys,
     Key::CloseToTray,
+    Key::Working,
+    Key::Unlocking,
+    Key::Importing,
+    Key::ReadingFile,
+    Key::ChangingMaster,
+    Key::AttachmentTooBig,
+    Key::Url,
+    Key::Notes,
+    Key::Favorite,
+    Key::Reveal,
+    Key::Export,
+    Key::ExportJson,
+    Key::ExportCsv,
+    Key::ExportWarning,
+    Key::Exported,
+    Key::Trash,
+    Key::TrashEmpty,
+    Key::Restore,
+    Key::Restored,
+    Key::DeleteForever,
+    Key::Deleted,
+    Key::Close,
 ];
 
 pub fn t(lang: Lang, key: Key) -> &'static str {
@@ -734,6 +780,121 @@ pub fn t(lang: Lang, key: Key) -> &'static str {
             Lang::Pt => "Fechar minimiza pra bandeja.",
             Lang::En => "Closing minimizes to tray.",
             Lang::Es => "Cerrar minimiza a la bandeja.",
+        },
+        // ── lab-keys onda 17: jobs pesados (spinner) ──────────────────
+        Key::Working => match lang {
+            Lang::Pt => "trabalhando…",
+            Lang::En => "working…",
+            Lang::Es => "trabajando…",
+        },
+        Key::Unlocking => match lang {
+            Lang::Pt => "destrancando…",
+            Lang::En => "unlocking…",
+            Lang::Es => "desbloqueando…",
+        },
+        Key::Importing => match lang {
+            Lang::Pt => "importando…",
+            Lang::En => "importing…",
+            Lang::Es => "importando…",
+        },
+        Key::ReadingFile => match lang {
+            Lang::Pt => "lendo arquivo…",
+            Lang::En => "reading file…",
+            Lang::Es => "leyendo archivo…",
+        },
+        Key::ChangingMaster => match lang {
+            Lang::Pt => "trocando a senha mestra…",
+            Lang::En => "changing the master password…",
+            Lang::Es => "cambiando la contraseña maestra…",
+        },
+        // O limite é o do lab (o cofre inteiro é regravado a cada save).
+        Key::AttachmentTooBig => match lang {
+            Lang::Pt => "anexo grande demais (máx 10 MiB — o cofre inteiro é regravado a cada save)",
+            Lang::En => "attachment too large (max 10 MiB — the whole vault is rewritten on every save)",
+            Lang::Es => "adjunto demasiado grande (máx 10 MiB — la bóveda entera se regraba en cada guardado)",
+        },
+        // ── lab-keys onda 23 ─────────────────────────────────────────
+        Key::Url => match lang {
+            Lang::Pt => "URL",
+            Lang::En => "URL",
+            Lang::Es => "URL",
+        },
+        Key::Notes => match lang {
+            Lang::Pt => "Notas",
+            Lang::En => "Notes",
+            Lang::Es => "Notas",
+        },
+        Key::Favorite => match lang {
+            Lang::Pt => "Favorito",
+            Lang::En => "Favorite",
+            Lang::Es => "Favorito",
+        },
+        Key::Reveal => match lang {
+            Lang::Pt => "Mostrar/ocultar",
+            Lang::En => "Show/hide",
+            Lang::Es => "Mostrar/ocultar",
+        },
+        Key::Export => match lang {
+            Lang::Pt => "Exportar",
+            Lang::En => "Export",
+            Lang::Es => "Exportar",
+        },
+        Key::ExportJson => match lang {
+            Lang::Pt => "JSON (cofre em claro)",
+            Lang::En => "JSON (vault in the clear)",
+            Lang::Es => "JSON (bóveda en claro)",
+        },
+        Key::ExportCsv => match lang {
+            Lang::Pt => "CSV (planilha)",
+            Lang::En => "CSV (spreadsheet)",
+            Lang::Es => "CSV (hoja de cálculo)",
+        },
+        // Aviso FORTE: o export não tem cifra nenhuma.
+        Key::ExportWarning => match lang {
+            Lang::Pt => "ATENÇÃO: o export sai EM CLARO, sem cifra — qualquer app lê. Use só para migrar e apague o arquivo depois.",
+            Lang::En => "WARNING: the export is UNENCRYPTED — any app can read it. Use it only to migrate, then delete the file.",
+            Lang::Es => "ATENCIÓN: la exportación sale SIN CIFRAR — cualquier app puede leerla. Úsala solo para migrar y borra el archivo después.",
+        },
+        // Só o sufixo — o caminho entra via format! no chamador.
+        Key::Exported => match lang {
+            Lang::Pt => "exportado",
+            Lang::En => "exported",
+            Lang::Es => "exportado",
+        },
+        Key::Trash => match lang {
+            Lang::Pt => "Lixeira",
+            Lang::En => "Trash",
+            Lang::Es => "Papelera",
+        },
+        Key::TrashEmpty => match lang {
+            Lang::Pt => "lixeira vazia",
+            Lang::En => "trash is empty",
+            Lang::Es => "papelera vacía",
+        },
+        Key::Restore => match lang {
+            Lang::Pt => "Restaurar",
+            Lang::En => "Restore",
+            Lang::Es => "Restaurar",
+        },
+        Key::Restored => match lang {
+            Lang::Pt => "restaurado",
+            Lang::En => "restored",
+            Lang::Es => "restaurado",
+        },
+        Key::DeleteForever => match lang {
+            Lang::Pt => "Excluir de vez",
+            Lang::En => "Delete forever",
+            Lang::Es => "Eliminar para siempre",
+        },
+        Key::Deleted => match lang {
+            Lang::Pt => "excluído de vez",
+            Lang::En => "deleted forever",
+            Lang::Es => "eliminado para siempre",
+        },
+        Key::Close => match lang {
+            Lang::Pt => "Fechar",
+            Lang::En => "Close",
+            Lang::Es => "Cerrar",
         },
     }
 }
