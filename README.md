@@ -249,10 +249,12 @@ leitura: o terreno onde o webview ganha com folga.
     avaliada como onda futura; Firefox aceita extensão não assinada via
     `about:debugging` (temporária), Chrome/Edge aceitam pasta carregada com
     ID estável por chave RSA fixa.
-22. **Onda 22 (feita — filtro TOTP):** botão "TOTP ⟳" ao lado da busca —
-    toggle que mostra só os itens com código rotativo. Estado de sessão,
-    como a busca. Passkey avaliada: depende da ponte de navegador (onda
-    futura) — extensão sem assinatura não ganha as APIs de WebAuthn.
+22. **Onda 22 (feita — filtro de códigos rotativos):** botão **"TOTP ⟳"**
+    ao lado da busca no `lab-keys` — toggle que mostra só os itens com
+    código que muda (TOTP/oauth otp). Estado de sessão, como a busca.
+    (Passkeys ficam pra onda da ponte de navegador — pré-requisito real:
+    interceptar WebAuthn exige extensão, e o schema do `.tkeys` não tem
+    campo de passkey.)
 
 ## Releases
 
